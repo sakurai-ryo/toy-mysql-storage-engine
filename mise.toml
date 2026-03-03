@@ -1,0 +1,15 @@
+min_version = "2025.12.12"
+
+[tools]
+cmake = "latest"
+# FIXME: gpg verification fails
+# make = "latest"
+
+[tasks.mysql_configure]
+run = '''
+cd mysql-server
+rm -rf build
+mkdir build
+cd build
+cmake .. -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../boost -DBISON_EXECUTABLE=$(brew --prefix bison)/bin/bison
+'''

@@ -14,7 +14,7 @@
       in
       {
         # https://nixos.wiki/wiki/Using_Clang_instead_of_GCC
-        devShells.default = pkgs.mkShell.override { stdenv = pkgs.llvmPackages_22.stdenv; } {
+        devShells.default = pkgs.mkShell.override { stdenv = pkgs.llvmPackages_21.stdenv; } {
           buildInputs = with pkgs; [
             cmake
             gnumake

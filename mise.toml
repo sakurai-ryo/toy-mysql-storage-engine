@@ -5,11 +5,19 @@ cmake = "latest"
 # FIXME: gpg verification fails
 # make = "latest"
 
+# https://labs.gree.jp/blog/2018/07/17099/
+# [tasks.init]
+# run = '''
+# brew install bison openssl
+# '''
+
 [tasks.mysql_configure]
 run = '''
+ln -sfn ../../src mysql-server/storage/toydb
 cd mysql-server
 rm -rf build
 mkdir build
 cd build
-cmake .. -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../boost -DBISON_EXECUTABLE=$(brew --prefix bison)/bin/bison
+cmake .. -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../boost -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBISON_EXECUTABLE=$(brew --prefix bison)/bin/bison
+sed -i '' 's|mysql-server/storage/toydb/|src/|g' compile_commands.json
 '''

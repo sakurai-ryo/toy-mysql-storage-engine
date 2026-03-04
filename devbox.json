@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.17.0/.schema/devbox.schema.json",
+  "packages": [
+    "cmake@4.1.2",
+    "gnumake@4.4.1",
+    "bison@3.8.2",
+    "clang@21.1.8",
+    "clang-tools@21.1.8",
+    "openssl@3.6.0",
+    "gcc@15.2.0"
+  ],
+  "shell": {
+    "init_hook": [
+      "echo 'Welcome to devbox!' > /dev/null"
+    ],
+    "scripts": {
+      "test": [
+        "echo \"Error: no test specified\" && exit 1"
+      ]
+    }
+  }
+}

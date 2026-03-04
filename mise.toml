@@ -23,13 +23,13 @@ cmake --build . --target GenError
 '''
 
 [tasks.fmt]
-run = 'clang-format -i src/**/*.cc src/**/*.h'
+run = 'find src -name "*.cc" -o -name "*.h" | xargs clang-format -i'
 
 [tasks."fmt:check"]
-run = 'clang-format --dry-run --Werror src/**/*.cc src/**/*.h'
+run = 'find src -name "*.cc" -o -name "*.h" | xargs clang-format --dry-run --Werror'
 
 [tasks.lint]
-run = 'clang-tidy src/**/*.cc src/**/*.h -p mysql-server/build'
+run = 'find src -name "*.cc" -o -name "*.h" | xargs clang-tidy -p mysql-server/build'
 
 [tasks."lint:fix"]
-run = 'clang-tidy --fix src/**/*.cc src/**/*.h -p mysql-server/build'
+run = 'find src -name "*.cc" -o -name "*.h" | xargs clang-tidy -fix -p mysql-server/build'

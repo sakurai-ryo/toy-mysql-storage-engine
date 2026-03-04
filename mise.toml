@@ -1,6 +1,6 @@
 min_version = "2025.12.12"
 
-[tasks.mysql-configure]
+[tasks."mysql:configure"]
 run = '''
 ln -sfn ../../src mysql-server/storage/toydb
 
@@ -15,8 +15,8 @@ cmake .. -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../boost -DCMAKE_EXPORT_COMPILE_COMMAND
 cmake --build . --target GenError
 '''
 
-[tasks.mysql-gen-error]
-depends = ["mysql-configure"]
+[tasks."mysql:gen-error"]
+depends = ["mysql:configure"]
 run = '''
 cd mysql-server/build
 cmake --build . --target GenError

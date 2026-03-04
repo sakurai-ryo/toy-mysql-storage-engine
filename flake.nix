@@ -40,7 +40,7 @@
 
           # annoying when run frequently
           # shellHook = ''
-          #   mise run mysql-gen-error
+          #   mise run mysql:gen-error
           # '';
 
           CMAKE_PREFIX_PATH = "${pkgs.openssl.dev}";

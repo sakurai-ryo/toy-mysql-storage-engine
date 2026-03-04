@@ -24,6 +24,8 @@
 
 #include <sys/types.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <string>
@@ -31,7 +33,6 @@
 #include <vector>
 
 #include "my_base.h" /* ha_rows */
-#include "my_compiler.h"
 #include "my_inttypes.h"
 #include "sql/handler.h" /* handler */
 #include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
@@ -124,11 +125,11 @@ class ha_toydb : public handler {
   uint max_supported_key_length() const override { return 0; }
 
   double scan_time() override {
-    return (double)(stats.records + stats.deleted) / 20.0 + 10;
+    return (static_cast<double>(stats.records + stats.deleted) / 20.0) + 10;
   }
 
   double read_time(uint, uint, ha_rows rows) override {
-    return (double)rows / 20.0 + 1;
+    return (static_cast<double>(rows) / 20.0) + 1;
   }
 
   int open(const char *name, int mode, uint test_if_locked,

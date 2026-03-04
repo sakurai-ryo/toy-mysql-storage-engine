@@ -24,6 +24,10 @@
 
 #include "ha_toydb.h"
 
+#include <cassert>
+#include <climits>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 // #include "my_dbug.h"
@@ -37,30 +41,35 @@
 
 #include <fcntl.h>
 #include <mysql/plugin.h>
-#include <mysql/psi/mysql_file.h>
-#include <algorithm>
+#include <sys/types.h>
+#include <mutex>
 
-#include "m_string.h"
-#include "map_helpers.h"
-#include "my_byteorder.h"
+#include "my_base.h"
 #include "my_dbug.h"
+#include "my_inttypes.h"
 #include "my_psi_config.h"
 #include "mysql/plugin.h"
-#include "mysql/psi/mysql_memory.h"
+#include "mysql/service_mysql_alloc.h"
+#include "mysql/service_thd_alloc.h"
+#include "mysql/status_var.h"
 #include "nulls.h"
 #include "sql/derror.h"
 #include "sql/field.h"
+#include "sql/handler.h"
+#include "sql/mysqld_cs.h"
 #include "sql/sql_class.h"
+#include "sql/sql_const.h"
 #include "sql/sql_lex.h"
 #include "sql/sql_plugin.h"
-#include "sql/system_variables.h"
 #include "sql/table.h"
+#include "template_utils.h"
+#include "thr_lock.h"
 #include "typelib.h"
 
 static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table,
                                      bool partitioned, MEM_ROOT *mem_root);
 
-handlerton *toydb_hton;
+static handlerton *toydb_hton;
 
 Toydb_share::Toydb_share() { thr_lock_init(&lock); }
 
@@ -70,7 +79,7 @@ Toydb_share::Toydb_share() { thr_lock_init(&lock); }
 static int toydb_init_func(void *p) {
   DBUG_TRACE;
 
-  toydb_hton = (handlerton *)p;
+  toydb_hton = static_cast<handlerton *>(p);
   toydb_hton->create = toydb_create_handler;
   toydb_hton->state = SHOW_OPTION_YES;
   toydb_hton->flags = HTON_CAN_RECREATE;
@@ -95,14 +104,15 @@ static int toydb_deinit_func(void *p [[maybe_unused]]) {
 }
 
 Toydb_share *ha_toydb::get_share() {
-  Toydb_share *tmp_share;
+  Toydb_share *tmp_share = nullptr;
 
   DBUG_TRACE;
 
   lock_shared_ha_data();
-  if (!(tmp_share = static_cast<Toydb_share *>(get_ha_share_ptr()))) {
+  if ((tmp_share = dynamic_cast<Toydb_share *>(get_ha_share_ptr())) ==
+      nullptr) {
     tmp_share = new Toydb_share;
-    if (!tmp_share) goto err;
+    if (tmp_share == nullptr) goto err;
 
     set_ha_share_ptr(static_cast<Handler_share *>(tmp_share));
   }
@@ -124,7 +134,7 @@ ha_toydb::ha_toydb(handlerton *hton, TABLE_SHARE *table_arg)
 int ha_toydb::open(const char *, int, uint, const dd::Table *) {
   DBUG_TRACE;
 
-  if (!(share = get_share())) return 1;
+  if ((share = get_share()) == nullptr) return 1;
   thr_lock_data_init(&share->lock, &lock, nullptr);
 
   return 0;
@@ -143,7 +153,7 @@ int ha_toydb::write_row(uchar *) {
   String *val = table->field[1]->val_str(&val_buf);
 
   std::lock_guard<std::mutex> guard(share->data_mutex);
-  if (share->data.count(key)) return HA_ERR_FOUND_DUPP_KEY;
+  if (share->data.contains(key) != 0u) return HA_ERR_FOUND_DUPP_KEY;
   share->data.emplace(key, std::string(val->ptr(), val->length()));
   return 0;
 }
@@ -157,7 +167,7 @@ int ha_toydb::update_row(const uchar *, uchar *) {
 
   std::lock_guard<std::mutex> guard(share->data_mutex);
   if (new_key != current_key) {
-    if (share->data.count(new_key)) return HA_ERR_FOUND_DUPP_KEY;
+    if (share->data.contains(new_key) != 0u) return HA_ERR_FOUND_DUPP_KEY;
     share->data.erase(current_key);
   }
   share->data[new_key] = std::string(val->ptr(), val->length());
@@ -175,35 +185,35 @@ int ha_toydb::delete_row(const uchar *) {
 
 int ha_toydb::index_read_map(uchar *, const uchar *, key_part_map,
                              enum ha_rkey_function) {
-  int rc;
+  int rc = 0;
   DBUG_TRACE;
   rc = HA_ERR_WRONG_COMMAND;
   return rc;
 }
 
 int ha_toydb::index_next(uchar *) {
-  int rc;
+  int rc = 0;
   DBUG_TRACE;
   rc = HA_ERR_WRONG_COMMAND;
   return rc;
 }
 
 int ha_toydb::index_prev(uchar *) {
-  int rc;
+  int rc = 0;
   DBUG_TRACE;
   rc = HA_ERR_WRONG_COMMAND;
   return rc;
 }
 
 int ha_toydb::index_first(uchar *) {
-  int rc;
+  int rc = 0;
   DBUG_TRACE;
   rc = HA_ERR_WRONG_COMMAND;
   return rc;
 }
 
 int ha_toydb::index_last(uchar *) {
-  int rc;
+  int rc = 0;
   DBUG_TRACE;
   rc = HA_ERR_WRONG_COMMAND;
   return rc;
@@ -246,7 +256,7 @@ void ha_toydb::position(const uchar *) {
 int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
   DBUG_TRACE;
 
-  int64_t key;
+  int64_t key = 0;
   memcpy(&key, pos, sizeof(key));
 
   std::lock_guard<std::mutex> guard(share->data_mutex);
@@ -263,7 +273,7 @@ int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
 
 int ha_toydb::info(uint) {
   DBUG_TRACE;
-  if (share) {
+  if (share != nullptr) {
     std::lock_guard<std::mutex> guard(share->data_mutex);
     stats.records = share->data.size();
   }
@@ -320,8 +330,8 @@ int ha_toydb::create(const char *name, TABLE *, HA_CREATE_INFO *, dd::Table *) {
   DBUG_TRACE;
 
   THD *thd = ha_thd();
-  char *buf = (char *)my_malloc(PSI_NOT_INSTRUMENTED, SHOW_VAR_FUNC_BUFF_SIZE,
-                                MYF(MY_FAE));
+  char *buf = static_cast<char *>(
+      my_malloc(PSI_NOT_INSTRUMENTED, SHOW_VAR_FUNC_BUFF_SIZE, MYF(MY_FAE)));
   snprintf(buf, SHOW_VAR_FUNC_BUFF_SIZE, "Last creation '%s'", name);
   THDVAR_SET(thd, last_create_thdvar, buf);
   my_free(buf);
@@ -332,7 +342,7 @@ int ha_toydb::create(const char *name, TABLE *, HA_CREATE_INFO *, dd::Table *) {
   return 0;
 }
 
-struct st_mysql_storage_engine toydb_storage_engine = {
+static struct st_mysql_storage_engine toydb_storage_engine = {
     MYSQL_HANDLERTON_INTERFACE_VERSION};
 
 static ulong srv_enum_var = 0;
@@ -342,10 +352,10 @@ static int srv_signed_int_var = 0;
 static long srv_signed_long_var = 0;
 static longlong srv_signed_longlong_var = 0;
 
-const char *enum_var_names[] = {"e1", "e2", NullS};
+static const char *enum_var_names[] = {"e1", "e2", NullS};
 
-TYPELIB enum_var_typelib = {array_elements(enum_var_names) - 1,
-                            "enum_var_typelib", enum_var_names, nullptr};
+static TYPELIB enum_var_typelib = {array_elements(enum_var_names) - 1,
+                                   "enum_var_typelib", enum_var_names, nullptr};
 
 static MYSQL_SYSVAR_ENUM(enum_var,                        // name
                          srv_enum_var,                    // varname
@@ -429,28 +439,36 @@ struct toydb_vars_t {
   ulong var6;
 };
 
-toydb_vars_t toydb_vars = {100, 20.01, "three hundred", true, false, 8250};
+static toydb_vars_t toydb_vars = {100,  20.01, "three hundred",
+                                  true, false, 8250};
 
 static SHOW_VAR show_status_toydb[] = {
-    {"var1", (char *)&toydb_vars.var1, SHOW_LONG, SHOW_SCOPE_GLOBAL},
-    {"var2", (char *)&toydb_vars.var2, SHOW_DOUBLE, SHOW_SCOPE_GLOBAL},
+    {"var1", reinterpret_cast<char *>(&toydb_vars.var1), SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+    {"var2", reinterpret_cast<char *>(&toydb_vars.var2), SHOW_DOUBLE,
+     SHOW_SCOPE_GLOBAL},
     {nullptr, nullptr, SHOW_UNDEF,
      SHOW_SCOPE_UNDEF}  // null terminator required
 };
 
 static SHOW_VAR show_array_toydb[] = {
-    {"array", (char *)show_status_toydb, SHOW_ARRAY, SHOW_SCOPE_GLOBAL},
-    {"var3", (char *)&toydb_vars.var3, SHOW_CHAR, SHOW_SCOPE_GLOBAL},
-    {"var4", (char *)&toydb_vars.var4, SHOW_BOOL, SHOW_SCOPE_GLOBAL},
+    {"array", reinterpret_cast<char *>(show_status_toydb), SHOW_ARRAY,
+     SHOW_SCOPE_GLOBAL},
+    {"var3", reinterpret_cast<char *>(&toydb_vars.var3), SHOW_CHAR,
+     SHOW_SCOPE_GLOBAL},
+    {"var4", reinterpret_cast<char *>(&toydb_vars.var4), SHOW_BOOL,
+     SHOW_SCOPE_GLOBAL},
     {nullptr, nullptr, SHOW_UNDEF, SHOW_SCOPE_UNDEF}};
 
 static SHOW_VAR func_status[] = {
-    {"toydb_func_toydb", (char *)show_func_toydb, SHOW_FUNC, SHOW_SCOPE_GLOBAL},
-    {"toydb_status_var5", (char *)&toydb_vars.var5, SHOW_BOOL,
+    {"toydb_func_toydb", reinterpret_cast<char *>(show_func_toydb), SHOW_FUNC,
      SHOW_SCOPE_GLOBAL},
-    {"toydb_status_var6", (char *)&toydb_vars.var6, SHOW_LONG,
+    {"toydb_status_var5", reinterpret_cast<char *>(&toydb_vars.var5), SHOW_BOOL,
      SHOW_SCOPE_GLOBAL},
-    {"toydb_status", (char *)show_array_toydb, SHOW_ARRAY, SHOW_SCOPE_GLOBAL},
+    {"toydb_status_var6", reinterpret_cast<char *>(&toydb_vars.var6), SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+    {"toydb_status", reinterpret_cast<char *>(show_array_toydb), SHOW_ARRAY,
+     SHOW_SCOPE_GLOBAL},
     {nullptr, nullptr, SHOW_UNDEF, SHOW_SCOPE_UNDEF}};
 
 mysql_declare_plugin(toydb){

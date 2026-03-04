@@ -38,12 +38,23 @@
               libtirpc
             ];
 
-          # annoying when run frequently
           # shellHook = ''
           #   mise run mysql:gen-error
           # '';
 
           CMAKE_PREFIX_PATH = "${pkgs.openssl.dev}";
+        };
+
+        apps.lint = flake-utils.lib.mkApp {
+          drv = pkgs.writeShellScriptBin "lint" ''
+            find src -name "*.cc" -o -name "*.h" | xargs ${pkgs.clang-tools}/bin/clang-tidy -p mysql-server/build "$@"
+          '';
+        };
+
+        apps.lint-fix = flake-utils.lib.mkApp {
+          drv = pkgs.writeShellScriptBin "lint-fix" ''
+            find src -name "*.cc" -o -name "*.h" | xargs ${pkgs.clang-tools}/bin/clang-tidy --fix -p mysql-server/build "$@"
+          '';
         };
 
         formatter = pkgs.nixfmt-tree;

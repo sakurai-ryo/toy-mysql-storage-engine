@@ -26,11 +26,35 @@
 
 #include <cstring>
 
+// #include "my_dbug.h"
+// #include "mysql/plugin.h"
+// #include "sql/table.h"
+// #include "sql/field.h"
+// #include "nulls.h"
+// #include "sql/sql_class.h"
+// #include "sql/sql_plugin.h"
+// #include "typelib.h"
+
+#include <fcntl.h>
+#include <mysql/plugin.h>
+#include <mysql/psi/mysql_file.h>
+#include <algorithm>
+
+#include "m_string.h"
+#include "map_helpers.h"
+#include "my_byteorder.h"
 #include "my_dbug.h"
+#include "my_psi_config.h"
 #include "mysql/plugin.h"
+#include "mysql/psi/mysql_memory.h"
 #include "nulls.h"
+#include "sql/derror.h"
+#include "sql/field.h"
 #include "sql/sql_class.h"
+#include "sql/sql_lex.h"
 #include "sql/sql_plugin.h"
+#include "sql/system_variables.h"
+#include "sql/table.h"
 #include "typelib.h"
 
 static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table,

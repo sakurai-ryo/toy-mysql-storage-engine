@@ -10,6 +10,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        isLinux = pkgs.stdenv.isLinux;
       in
       {
         # https://nixos.wiki/wiki/Using_Clang_instead_of_GCC
@@ -23,6 +24,7 @@
             zlib
             ncurses
             clang-tools
+          ] ++ lib.optionals isLinux [
             libtirpc
           ];
 
@@ -32,6 +34,8 @@
 
           CMAKE_PREFIX_PATH = "${pkgs.openssl.dev}";
         };
+
+        formatter = pkgs.nixfmt-tree;
       }
     );
 }

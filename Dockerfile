@@ -1,3 +1,4 @@
+# Use same base image for both stages
 FROM oraclelinux:9 AS builder
 
 ENV MYSQL_VERSION=8.4.3

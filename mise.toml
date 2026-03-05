@@ -5,18 +5,71 @@ run = """
 ln -sfn ../../src mysql-server/storage/toydb
 
 cd mysql-server
-rm -rf build
 mkdir -p build
 cd build
 
 cmake .. -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../boost -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 """
 
-[tasks."mysql:gen-error"]
+[tasks."mysql:gen-header"]
 depends = ["mysql:configure"]
 run = """
 cd mysql-server/build
 cmake --build . --target GenError
+"""
+
+[tasks."mysql:build"]
+# depends = ["mysql:configure"]
+dir = "mysql-server"
+run = """
+ln -sfn ../../src storage/toydb
+
+cd build
+# TODO: pass number of cpu cores dynamically
+make -j12
+
+echo "Execute 'INSTALL PLUGIN toydb SONAME "ha_toydb.so";' to install the storage engine"
+"""
+
+[tasks."mysql:build-storage-engine"]
+# depends = ["mysql:configure"]
+dir = "mysql-server"
+run = """
+ln -sfn ../../src storage/toydb
+
+cd build
+cmake --build . --target toydb -- -j12
+
+echo "Execute 'INSTALL PLUGIN toydb SONAME "ha_toydb.so";' to install the storage engine"
+"""
+
+[tasks."mysql:run-init"]
+# depends = ["mysql:build"]
+dir = "mysql-server"
+# https://dev.mysql.com/doc/refman/8.4/en/data-directory-initialization.html
+run = """
+mkdir -p run/data
+
+cat <<EOF > run/my.cnf
+[mysqld]
+basedir=${PWD}/build
+datadir=${PWD}/run/data
+EOF
+
+build/bin/mysqld --defaults-file=run/my.cnf --initialize
+"""
+
+[tasks."mysql:run"]
+dir = "mysql-server"
+# https://dev.mysql.com/doc/refman/8.4/en/starting-server.html
+run = """
+build/bin/mysqld --defaults-file=run/my.cnf
+"""
+
+[tasks."mysql:stop"]
+dir = "mysql-server"
+run = """
+build/bin/mysqladmin -u root -p shutdown
 """
 
 [tasks.fmt]

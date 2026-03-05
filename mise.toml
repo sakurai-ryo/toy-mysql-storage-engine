@@ -1,7 +1,7 @@
 min_version = "2025.12.12"
 
 [tasks."mysql:configure"]
-run = '''
+run = """
 ln -sfn ../../src mysql-server/storage/toydb
 
 cd mysql-server
@@ -9,27 +9,36 @@ rm -rf build
 mkdir -p build
 cd build
 
-cmake .. -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../boost -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBISON_EXECUTABLE=$(brew --prefix bison)/bin/bison
-
-# for generating mysqld_error.h
-cmake --build . --target GenError
-'''
+cmake .. -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../boost -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+"""
 
 [tasks."mysql:gen-error"]
 depends = ["mysql:configure"]
-run = '''
+run = """
 cd mysql-server/build
 cmake --build . --target GenError
-'''
+"""
 
 [tasks.fmt]
-run = 'find src -name "*.cc" -o -name "*.h" | xargs clang-format -i'
+run = """
+find src .vscode -name "*.cc" -o -name "*.h" \
+| xargs clang-format -i
+"""
 
 [tasks."fmt:check"]
-run = 'find src -name "*.cc" -o -name "*.h" | xargs clang-format --dry-run --Werror'
+run = """
+find src .vscode -name "*.cc" -o -name "*.h" \
+| xargs clang-format --dry-run --Werror
+"""
 
 [tasks.lint]
-run = 'find src -name "*.cc" -o -name "*.h" | xargs clang-tidy -p mysql-server/build'
+run = """
+find src -name "*.cc" -o -name "*.h" \
+| xargs clang-tidy -p mysql-server/build --extra-arg=-isystem --extra-arg="$LIBCXX_INCLUDE_PATH"
+"""
 
 [tasks."lint:fix"]
-run = 'find src -name "*.cc" -o -name "*.h" | xargs clang-tidy -fix -p mysql-server/build'
+run = """
+find src -name "*.cc" -o -name "*.h" \
+| xargs clang-tidy -fix -p mysql-server/build --extra-arg=-isystem --extra-arg="$LIBCXX_INCLUDE_PATH"
+"""

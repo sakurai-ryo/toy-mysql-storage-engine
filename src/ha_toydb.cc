@@ -153,7 +153,8 @@ int ha_toydb::write_row(uchar *) {
   String *val = table->field[1]->val_str(&val_buf);
 
   std::lock_guard<std::mutex> guard(share->data_mutex);
-  if (share->data.contains(key) != 0u) return HA_ERR_FOUND_DUPP_KEY;
+  if (static_cast<unsigned int>(share->data.contains(key)) != 0U)
+    return HA_ERR_FOUND_DUPP_KEY;
   share->data.emplace(key, std::string(val->ptr(), val->length()));
   return 0;
 }
@@ -167,7 +168,8 @@ int ha_toydb::update_row(const uchar *, uchar *) {
 
   std::lock_guard<std::mutex> guard(share->data_mutex);
   if (new_key != current_key) {
-    if (share->data.contains(new_key) != 0u) return HA_ERR_FOUND_DUPP_KEY;
+    if (static_cast<unsigned int>(share->data.contains(new_key)) != 0U)
+      return HA_ERR_FOUND_DUPP_KEY;
     share->data.erase(current_key);
   }
   share->data[new_key] = std::string(val->ptr(), val->length());

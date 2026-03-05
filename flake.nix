@@ -26,12 +26,12 @@
             [
               cmake
               gnumake
+              clang-tools
               bison
               pkg-config
               openssl
               zlib
               ncurses
-              clang-tools
               mise
             ]
             ++ lib.optionals isLinux [
@@ -42,19 +42,13 @@
           #   mise run mysql:gen-error
           # '';
 
-          CMAKE_PREFIX_PATH = "${pkgs.openssl.dev}";
-        };
-
-        apps.lint = flake-utils.lib.mkApp {
-          drv = pkgs.writeShellScriptBin "lint" ''
-            find src -name "*.cc" -o -name "*.h" | xargs ${pkgs.clang-tools}/bin/clang-tidy -p mysql-server/build "$@"
-          '';
-        };
-
-        apps.lint-fix = flake-utils.lib.mkApp {
-          drv = pkgs.writeShellScriptBin "lint-fix" ''
-            find src -name "*.cc" -o -name "*.h" | xargs ${pkgs.clang-tools}/bin/clang-tidy --fix -p mysql-server/build "$@"
-          '';
+          # Expose libc++ include path for clang-tidy.
+          # The Nix CC wrapper implicitly adds libc++ headers when compiling, but compile_commands.json only records
+          # the explicit flags passed to the wrapper.
+          # clang-tidy uses its own frontend (not the wrapper), so it cannot discover these implicit paths.
+          # We pass this via --extra-arg in the lint task (see mise.toml).
+          # https://nixos.org/manual/nixpkgs/stable/#bintools-wrapper
+          LIBCXX_INCLUDE_PATH = "${pkgs.llvmPackages_21.libcxx.dev}/include/c++/v1";
         };
 
         formatter = pkgs.nixfmt-tree;

@@ -63,7 +63,7 @@ class Toydb_share : public Handler_share {
 */
 class ha_toydb : public handler {
   THR_LOCK_DATA lock;        ///< MySQL lock
-  Toydb_share *share;        ///< Shared lock info
+  Toydb_share *share{};      ///< Shared lock info
   Toydb_share *get_share();  ///< Get the share
 
   /// Scan state for rnd_next

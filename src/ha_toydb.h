@@ -30,6 +30,7 @@
 #include <mutex>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "my_base.h" /* ha_rows */
@@ -37,9 +38,88 @@
 #include "sql/handler.h" /* handler */
 #include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
 
-// class Toydb_table {
+using SupportedDBValue = std::variant<int64, std::string>;
+
+enum class DataType { INT, DOUBLE, STRING };
+
+struct ColumnDef {
+  std::string name;
+  DataType type;
+};
+
+// class Table {
+//  private:
+//   std::string table_name;
+//   std::vector<ColumnDef> schema;
+//   std::vector<std::vector<SupportedDBValue>> rows;
+
+//   // 挿入される値の型がスキーマと一致しているか確認するヘルパー
+//   bool check_type_match(DataType expected,
+//                         const SupportedDBValue &value) const {
+//     switch (expected) {
+//       case DataType::INT:
+//         return std::holds_alternative<int>(value);
+//       case DataType::DOUBLE:
+//         return std::holds_alternative<double>(value);
+//       case DataType::STRING:
+//         return std::holds_alternative<std::string>(value);
+//       default:
+//         return false;
+//     }
+//   }
+
 //  public:
-// }
+//   explicit Table(std::string name) : table_name(std::move(name)) {}
+
+//   // カラムの追加（CREATE TABLE相当）
+//   void add_column(const std::string &name, DataType type) {
+//     if (!rows.empty()) {
+//       throw std::logic_error(
+//           "Cannot add column after rows have been inserted.");
+//     }
+//     schema.push_back({name, type});
+//   }
+
+//   // 行の挿入（INSERT INTO相当）
+//   void insert_row(const std::vector<DbValue> &row_data) {
+//     // カラム数のチェック
+//     if (row_data.size() != schema.size()) {
+//       throw std::invalid_argument("Column count mismatch.");
+//     }
+
+//     // 型のチェック
+//     for (size_t i = 0; i < schema.size(); ++i) {
+//       if (!check_type_match(schema[i].type, row_data[i])) {
+//         throw std::invalid_argument("Type mismatch at column: " +
+//                                     schema[i].name);
+//       }
+//     }
+
+//     // 検証を通過したら行を追加
+//     rows.push_back(row_data);
+//   }
+
+//   // デバッグ用：全データの出力
+//   void print_all() const {
+//     std::cout << "--- Table: " << table_name << " ---\n";
+
+//     // ヘッダーの出力
+//     for (const auto &col : schema) {
+//       std::cout << col.name << "\t| ";
+//     }
+//     std::cout << "\n----------------------------------\n";
+
+//     // 行データの出力
+//     for (const auto &row : rows) {
+//       for (const auto &cell : row) {
+//         // std::visit で中身を取り出して出力
+//         std::visit([](const auto &val) { std::cout << val << "\t| "; },
+//         cell);
+//       }
+//       std::cout << '\n';
+//     }
+//   }
+// };
 
 /**
   全てのhandlerインスタンスで共有するデータを保持するクラス

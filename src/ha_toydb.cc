@@ -108,16 +108,16 @@ Toydb_share *ha_toydb::get_share() {
 
   DBUG_TRACE;
 
-  lock_shared_ha_data();
-  if ((tmp_share = dynamic_cast<Toydb_share *>(get_ha_share_ptr())) ==
+  this->lock_shared_ha_data();
+  if ((tmp_share = dynamic_cast<Toydb_share *>(this->get_ha_share_ptr())) ==
       nullptr) {
     tmp_share = new Toydb_share;
     if (tmp_share == nullptr) goto err;
 
-    set_ha_share_ptr(static_cast<Handler_share *>(tmp_share));
+    this->set_ha_share_ptr(static_cast<Handler_share *>(tmp_share));
   }
 err:
-  unlock_shared_ha_data();
+  this->unlock_shared_ha_data();
   return tmp_share;
 }
 
@@ -128,14 +128,14 @@ static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table, bool,
 
 ha_toydb::ha_toydb(handlerton *hton, TABLE_SHARE *table_arg)
     : handler(hton, table_arg) {
-  ref_length = sizeof(int64_t);
+  this->ref_length = sizeof(int64_t);
 }
 
 int ha_toydb::open(const char *, int, uint, const dd::Table *) {
   DBUG_TRACE;
 
-  if ((share = get_share()) == nullptr) return 1;
-  thr_lock_data_init(&share->lock, &lock, nullptr);
+  if ((this->share = this->get_share()) == nullptr) return 1;
+  thr_lock_data_init(&this->share->lock, &this->lock, nullptr);
 
   return 0;
 }
@@ -148,40 +148,40 @@ int ha_toydb::close(void) {
 int ha_toydb::write_row(uchar *) {
   DBUG_TRACE;
 
-  int64_t key = table->field[0]->val_int();
+  int64_t key = this->table->field[0]->val_int();
   String val_buf;
-  String *val = table->field[1]->val_str(&val_buf);
+  String *val = this->table->field[1]->val_str(&val_buf);
 
-  std::lock_guard<std::mutex> guard(share->data_mutex);
-  if (static_cast<unsigned int>(share->data.contains(key)) != 0U)
+  std::lock_guard<std::mutex> guard(this->share->data_mutex);
+  if (static_cast<unsigned int>(this->share->data.contains(key)) != 0U)
     return HA_ERR_FOUND_DUPP_KEY;
-  share->data.emplace(key, std::string(val->ptr(), val->length()));
+  this->share->data.emplace(key, std::string(val->ptr(), val->length()));
   return 0;
 }
 
 int ha_toydb::update_row(const uchar *, uchar *) {
   DBUG_TRACE;
 
-  int64_t new_key = table->field[0]->val_int();
+  int64_t new_key = this->table->field[0]->val_int();
   String val_buf;
-  String *val = table->field[1]->val_str(&val_buf);
+  String *val = this->table->field[1]->val_str(&val_buf);
 
-  std::lock_guard<std::mutex> guard(share->data_mutex);
-  if (new_key != current_key) {
-    if (static_cast<unsigned int>(share->data.contains(new_key)) != 0U)
+  std::lock_guard<std::mutex> guard(this->share->data_mutex);
+  if (new_key != this->current_key) {
+    if (static_cast<unsigned int>(this->share->data.contains(new_key)) != 0U)
       return HA_ERR_FOUND_DUPP_KEY;
-    share->data.erase(current_key);
+    this->share->data.erase(this->current_key);
   }
-  share->data[new_key] = std::string(val->ptr(), val->length());
-  current_key = new_key;
+  this->share->data[new_key] = std::string(val->ptr(), val->length());
+  this->current_key = new_key;
   return 0;
 }
 
 int ha_toydb::delete_row(const uchar *) {
   DBUG_TRACE;
 
-  std::lock_guard<std::mutex> guard(share->data_mutex);
-  share->data.erase(current_key);
+  std::lock_guard<std::mutex> guard(this->share->data_mutex);
+  this->share->data.erase(this->current_key);
   return 0;
 }
 
@@ -224,35 +224,35 @@ int ha_toydb::index_last(uchar *) {
 int ha_toydb::rnd_init(bool) {
   DBUG_TRACE;
 
-  std::lock_guard<std::mutex> guard(share->data_mutex);
-  scan_rows.assign(share->data.begin(), share->data.end());
-  scan_index = 0;
+  std::lock_guard<std::mutex> guard(this->share->data_mutex);
+  this->scan_rows.assign(this->share->data.begin(), this->share->data.end());
+  this->scan_index = 0;
   return 0;
 }
 
 int ha_toydb::rnd_end() {
   DBUG_TRACE;
-  scan_rows.clear();
+  this->scan_rows.clear();
   return 0;
 }
 
 int ha_toydb::rnd_next(uchar *buf) {
   DBUG_TRACE;
 
-  if (scan_index >= scan_rows.size()) return HA_ERR_END_OF_FILE;
+  if (this->scan_index >= this->scan_rows.size()) return HA_ERR_END_OF_FILE;
 
-  auto &[key, val] = scan_rows[scan_index++];
-  current_key = key;
+  auto &[key, val] = this->scan_rows[this->scan_index++];
+  this->current_key = key;
 
-  memset(buf, 0, table->s->null_bytes);
-  table->field[0]->store(key, false);
-  table->field[1]->store(val.c_str(), val.length(), system_charset_info);
+  memset(buf, 0, this->table->s->null_bytes);
+  this->table->field[0]->store(key, false);
+  this->table->field[1]->store(val.c_str(), val.length(), system_charset_info);
   return 0;
 }
 
 void ha_toydb::position(const uchar *) {
   DBUG_TRACE;
-  memcpy(ref, &current_key, sizeof(current_key));
+  memcpy(this->ref, &this->current_key, sizeof(this->current_key));
 }
 
 int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
@@ -261,23 +261,23 @@ int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
   int64_t key = 0;
   memcpy(&key, pos, sizeof(key));
 
-  std::lock_guard<std::mutex> guard(share->data_mutex);
-  auto it = share->data.find(key);
-  if (it == share->data.end()) return HA_ERR_KEY_NOT_FOUND;
+  std::lock_guard<std::mutex> guard(this->share->data_mutex);
+  auto it = this->share->data.find(key);
+  if (it == this->share->data.end()) return HA_ERR_KEY_NOT_FOUND;
 
-  current_key = key;
-  memset(buf, 0, table->s->null_bytes);
-  table->field[0]->store(key, false);
-  table->field[1]->store(it->second.c_str(), it->second.length(),
-                         system_charset_info);
+  this->current_key = key;
+  memset(buf, 0, this->table->s->null_bytes);
+  this->table->field[0]->store(key, false);
+  this->table->field[1]->store(it->second.c_str(), it->second.length(),
+                               system_charset_info);
   return 0;
 }
 
 int ha_toydb::info(uint) {
   DBUG_TRACE;
-  if (share != nullptr) {
-    std::lock_guard<std::mutex> guard(share->data_mutex);
-    stats.records = share->data.size();
+  if (this->share != nullptr) {
+    std::lock_guard<std::mutex> guard(this->share->data_mutex);
+    this->stats.records = this->share->data.size();
   }
   return 0;
 }
@@ -289,8 +289,8 @@ int ha_toydb::extra(enum ha_extra_function) {
 
 int ha_toydb::delete_all_rows() {
   DBUG_TRACE;
-  std::lock_guard<std::mutex> guard(share->data_mutex);
-  share->data.clear();
+  std::lock_guard<std::mutex> guard(this->share->data_mutex);
+  this->share->data.clear();
   return 0;
 }
 
@@ -301,8 +301,9 @@ int ha_toydb::external_lock(THD *, int) {
 
 THR_LOCK_DATA **ha_toydb::store_lock(THD *, THR_LOCK_DATA **to,
                                      enum thr_lock_type lock_type) {
-  if (lock_type != TL_IGNORE && lock.type == TL_UNLOCK) lock.type = lock_type;
-  *to++ = &lock;
+  if (lock_type != TL_IGNORE && this->lock.type == TL_UNLOCK)
+    this->lock.type = lock_type;
+  *to++ = &this->lock;
   return to;
 }
 
@@ -331,7 +332,7 @@ static MYSQL_THDVAR_UINT(create_count_thdvar, 0, nullptr, nullptr, nullptr, 0,
 int ha_toydb::create(const char *name, TABLE *, HA_CREATE_INFO *, dd::Table *) {
   DBUG_TRACE;
 
-  THD *thd = ha_thd();
+  THD *thd = this->ha_thd();
   char *buf = static_cast<char *>(
       my_malloc(PSI_NOT_INSTRUMENTED, SHOW_VAR_FUNC_BUFF_SIZE, MYF(MY_FAE)));
   snprintf(buf, SHOW_VAR_FUNC_BUFF_SIZE, "Last creation '%s'", name);

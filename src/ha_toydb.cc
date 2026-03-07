@@ -66,12 +66,14 @@
 #include "thr_lock.h"
 #include "typelib.h"
 
+static ToydbTables *toydb_tables;
+
 static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table,
                                      bool partitioned, MEM_ROOT *mem_root);
 
 static handlerton *toydb_hton;
 
-Toydb_share::Toydb_share() { thr_lock_init(&lock); }
+Toydb_share::Toydb_share() { thr_lock_init(&this->lock); }
 
 /**
  * Storage Engineの初期化を行う
@@ -91,7 +93,7 @@ static int toydb_init_func(void *p) {
 }
 
 /**
- * Storage Engineのdeconstructor
+ * Storage Engineのdestructor
  *
  * 今回は特に処理はなし
  */
@@ -108,16 +110,14 @@ Toydb_share *ha_toydb::get_share() {
 
   DBUG_TRACE;
 
-  this->lock_shared_ha_data();
-  if ((tmp_share = dynamic_cast<Toydb_share *>(this->get_ha_share_ptr())) ==
-      nullptr) {
-    tmp_share = new Toydb_share;
-    if (tmp_share == nullptr) goto err;
+  SharedHaDataLock lock(this);
 
+  tmp_share = dynamic_cast<Toydb_share *>(this->get_ha_share_ptr());
+  if (tmp_share == nullptr) {
+    tmp_share = new Toydb_share;
     this->set_ha_share_ptr(static_cast<Handler_share *>(tmp_share));
   }
-err:
-  this->unlock_shared_ha_data();
+
   return tmp_share;
 }
 
@@ -134,7 +134,8 @@ ha_toydb::ha_toydb(handlerton *hton, TABLE_SHARE *table_arg)
 int ha_toydb::open(const char *, int, uint, const dd::Table *) {
   DBUG_TRACE;
 
-  if ((this->share = this->get_share()) == nullptr) return 1;
+  this->share = this->get_share();
+  if (this->share == nullptr) return 1;
   thr_lock_data_init(&this->share->lock, &this->lock, nullptr);
 
   return 0;
@@ -331,6 +332,12 @@ static MYSQL_THDVAR_UINT(create_count_thdvar, 0, nullptr, nullptr, nullptr, 0,
 
 int ha_toydb::create(const char *name, TABLE *, HA_CREATE_INFO *, dd::Table *) {
   DBUG_TRACE;
+
+  // check if the table already exists
+  if (toydb_tables->tables.contains(name)) {
+    DBUG_PRINT("error", ("Table '%s' already exists", name));
+    return 1;
+  }
 
   THD *thd = this->ha_thd();
   char *buf = static_cast<char *>(

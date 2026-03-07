@@ -38,101 +38,86 @@
 #include "sql/handler.h" /* handler */
 #include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
 
+struct ToydbTables {
+  std::map<std::string, Table> tables;
+};
+
 using SupportedDBValue = std::variant<int64, std::string>;
 
-enum class DataType { INT, DOUBLE, STRING };
+enum class DataType { INT, STRING };
 
-struct ColumnDef {
+bool check_type_match(DataType expected, const SupportedDBValue &value) {
+  switch (expected) {
+    case DataType::INT:
+      return std::holds_alternative<int64>(value);
+    case DataType::STRING:
+      return std::holds_alternative<std::string>(value);
+    default:
+      return false;
+  }
+}
+
+struct Column {
   std::string name;
   DataType type;
 };
 
-// class Table {
-//  private:
-//   std::string table_name;
-//   std::vector<ColumnDef> schema;
-//   std::vector<std::vector<SupportedDBValue>> rows;
+class Table final {
+ private:
+  std::string table_name;
+  std::vector<Column> columns;
+  std::vector<std::vector<SupportedDBValue>> rows;
 
-//   // 挿入される値の型がスキーマと一致しているか確認するヘルパー
-//   bool check_type_match(DataType expected,
-//                         const SupportedDBValue &value) const {
-//     switch (expected) {
-//       case DataType::INT:
-//         return std::holds_alternative<int>(value);
-//       case DataType::DOUBLE:
-//         return std::holds_alternative<double>(value);
-//       case DataType::STRING:
-//         return std::holds_alternative<std::string>(value);
-//       default:
-//         return false;
-//     }
-//   }
+ public:
+  explicit Table(std::string name) : table_name(std::move(name)) {}
 
-//  public:
-//   explicit Table(std::string name) : table_name(std::move(name)) {}
+  void add_column(const std::string &name, DataType type) {
+    if (!rows.empty()) {
+      throw std::logic_error(
+          "Cannot add column after rows have been inserted.");
+    }
+    columns.push_back({name, type});
+  }
 
-//   // カラムの追加（CREATE TABLE相当）
-//   void add_column(const std::string &name, DataType type) {
-//     if (!rows.empty()) {
-//       throw std::logic_error(
-//           "Cannot add column after rows have been inserted.");
-//     }
-//     schema.push_back({name, type});
-//   }
+  void insert_row(const std::vector<SupportedDBValue> &row_data) {
+    if (row_data.size() != columns.size()) {
+      throw std::invalid_argument("Column count mismatch.");
+    }
 
-//   // 行の挿入（INSERT INTO相当）
-//   void insert_row(const std::vector<DbValue> &row_data) {
-//     // カラム数のチェック
-//     if (row_data.size() != schema.size()) {
-//       throw std::invalid_argument("Column count mismatch.");
-//     }
+    for (size_t i = 0; i < columns.size(); ++i) {
+      if (!check_type_match(columns[i].type, row_data[i])) {
+        throw std::invalid_argument("Type mismatch at column: " +
+                                    columns[i].name);
+      }
+    }
 
-//     // 型のチェック
-//     for (size_t i = 0; i < schema.size(); ++i) {
-//       if (!check_type_match(schema[i].type, row_data[i])) {
-//         throw std::invalid_argument("Type mismatch at column: " +
-//                                     schema[i].name);
-//       }
-//     }
+    rows.push_back(row_data);
+  }
 
-//     // 検証を通過したら行を追加
-//     rows.push_back(row_data);
-//   }
+  void print_all() const {
+    std::cout << "--- Table: " << this->table_name << " ---\n";
 
-//   // デバッグ用：全データの出力
-//   void print_all() const {
-//     std::cout << "--- Table: " << table_name << " ---\n";
+    for (const auto &col : this->columns) {
+      std::cout << col.name << "\t| ";
+    }
+    std::cout << "\n----------------------------------\n";
 
-//     // ヘッダーの出力
-//     for (const auto &col : schema) {
-//       std::cout << col.name << "\t| ";
-//     }
-//     std::cout << "\n----------------------------------\n";
-
-//     // 行データの出力
-//     for (const auto &row : rows) {
-//       for (const auto &cell : row) {
-//         // std::visit で中身を取り出して出力
-//         std::visit([](const auto &val) { std::cout << val << "\t| "; },
-//         cell);
-//       }
-//       std::cout << '\n';
-//     }
-//   }
-// };
+    for (const auto &row : this->rows) {
+      for (const auto &cell : row) {
+        std::visit([](const auto &val) { std::cout << val << "\t| "; }, cell);
+      }
+      std::cout << '\n';
+    }
+  }
+};
 
 /**
-  全てのhandlerインスタンスで共有するデータを保持するクラス
+  同じテーブルの全てのhandlerインスタンスで共有するデータ
 */
-class Toydb_share : public Handler_share {
+class Toydb_share final : public Handler_share {
  public:
   THR_LOCK lock;
   std::mutex data_mutex;
-
-  // std::map<std::string,>
-
-  // TODO: 初期実装なので削除する
-  std::map<int64_t, std::string> data;
 
   Toydb_share();
   ~Toydb_share() override { thr_lock_delete(&lock); }
@@ -255,4 +240,22 @@ class ha_toydb : public handler {
   THR_LOCK_DATA **store_lock(
       THD *thd, THR_LOCK_DATA **to,
       enum thr_lock_type lock_type) override;  ///< required
+
+ private:
+  // Handler_shareのロックをRAIIで管理する
+  // 内部ではmysql_mutex_lock,mysql_mutex_unlockを利用していてstd::lock_guardを使えないのでラッパーを作った
+  class SharedHaDataLock {
+   public:
+    explicit SharedHaDataLock(ha_toydb *handler) : handler_(handler) {
+      this->handler_->lock_shared_ha_data();
+    }
+    ~SharedHaDataLock() { this->handler_->unlock_shared_ha_data(); }
+
+    // ロックの所有権はコピーされたくないので明示的に禁止する
+    SharedHaDataLock(const SharedHaDataLock &) = delete;
+    SharedHaDataLock &operator=(const SharedHaDataLock &) = delete;
+
+   private:
+    ha_toydb *handler_;
+  };
 };

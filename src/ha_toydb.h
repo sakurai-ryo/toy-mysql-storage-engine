@@ -39,43 +39,54 @@
 #include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
 
 struct ToydbTables {
-  std::map<std::string, Table> tables;
+  std::map<std::string, ToydbTable> tables;
 };
 
 using SupportedDBValue = std::variant<int64, std::string>;
 
-enum class DataType { INT, STRING };
-
-bool check_type_match(DataType expected, const SupportedDBValue &value) {
+bool check_type_match(enum_field_types expected,
+                      const SupportedDBValue &value) {
   switch (expected) {
-    case DataType::INT:
+    case enum_field_types::MYSQL_TYPE_LONGLONG:
       return std::holds_alternative<int64>(value);
-    case DataType::STRING:
+    case enum_field_types::MYSQL_TYPE_VAR_STRING:
       return std::holds_alternative<std::string>(value);
     default:
       return false;
   }
 }
 
-struct Column {
+bool check_supported_type(enum_field_types type) {
+  return type == enum_field_types::MYSQL_TYPE_LONGLONG ||
+         type == enum_field_types::MYSQL_TYPE_VAR_STRING;
+}
+
+struct ToydbColumn {
   std::string name;
-  DataType type;
+  enum_field_types type;
 };
 
-class Table final {
+class ToydbTable final {
  private:
   std::string table_name;
-  std::vector<Column> columns;
+  std::vector<ToydbColumn> columns;
   std::vector<std::vector<SupportedDBValue>> rows;
 
  public:
-  explicit Table(std::string name) : table_name(std::move(name)) {}
+  explicit ToydbTable(std::string name) : table_name(std::move(name)) {}
 
-  void add_column(const std::string &name, DataType type) {
+  // TODO: my_errorでエラーコードを返すように書き換え
+  void add_column(const std::string &name, enum_field_types type) {
     if (!rows.empty()) {
       throw std::logic_error(
           "Cannot add column after rows have been inserted.");
     }
+
+    if (!check_supported_type(type)) {
+      throw std::invalid_argument("Unsupported column type: " +
+                                  std::to_string(type));
+    }
+
     columns.push_back({name, type});
   }
 

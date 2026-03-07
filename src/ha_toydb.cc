@@ -44,6 +44,7 @@
 #include <sys/types.h>
 #include <mutex>
 
+#include "field_types.h"
 #include "my_base.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
@@ -330,7 +331,8 @@ static MYSQL_THDVAR_STR(last_create_thdvar, PLUGIN_VAR_MEMALLOC, nullptr,
 static MYSQL_THDVAR_UINT(create_count_thdvar, 0, nullptr, nullptr, nullptr, 0,
                          0, 1000, 0);
 
-int ha_toydb::create(const char *name, TABLE *, HA_CREATE_INFO *, dd::Table *) {
+int ha_toydb::create(const char *name, TABLE *table_info, HA_CREATE_INFO *,
+                     dd::Table *) {
   DBUG_TRACE;
 
   // check if the table already exists
@@ -339,15 +341,20 @@ int ha_toydb::create(const char *name, TABLE *, HA_CREATE_INFO *, dd::Table *) {
     return 1;
   }
 
-  THD *thd = this->ha_thd();
-  char *buf = static_cast<char *>(
-      my_malloc(PSI_NOT_INSTRUMENTED, SHOW_VAR_FUNC_BUFF_SIZE, MYF(MY_FAE)));
-  snprintf(buf, SHOW_VAR_FUNC_BUFF_SIZE, "Last creation '%s'", name);
-  THDVAR_SET(thd, last_create_thdvar, buf);
-  my_free(buf);
+  ToydbTable new_table(name);
 
-  uint count = THDVAR(thd, create_count_thdvar) + 1;
-  THDVAR_SET(thd, create_count_thdvar, &count);
+  auto i = 0;
+  while (table_info->field[i] != nullptr) {
+    DBUG_PRINT("field", ("Field %d: name=%s, type=%d", i,
+                         table_info->field[i]->field_name,
+                         table_info->field[i]->type()));
+
+    new_table.add_column(table_info->field[i]->field_name,
+                         table_info->field[i]->type());
+    i++;
+  }
+
+  toydb_tables->tables.emplace(name, std::move(new_table));
 
   return 0;
 }

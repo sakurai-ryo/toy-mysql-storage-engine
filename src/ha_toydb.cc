@@ -193,34 +193,67 @@ int ha_toydb::write_row(uchar *buf) {
     }
   }
 
-  toydb_table->second.insert_row(std::move(row_data));
-  return 0;
+  return toydb_table->second.insert_row(std::move(row_data));
 }
 
+/**
+ * @brief テーブルの行の更新
+ *
+ * 引数には更新前と更新後のデータ両方が渡される
+ */
 int ha_toydb::update_row(const uchar *, uchar *) {
   DBUG_TRACE;
 
-  int64_t new_key = this->table->field[0]->val_int();
-  String val_buf;
-  String *val = this->table->field[1]->val_str(&val_buf);
-
-  std::lock_guard<std::mutex> guard(this->share->data_mutex);
-  if (new_key != this->current_key) {
-    if (static_cast<unsigned int>(this->share->data.contains(new_key)) != 0U)
-      return HA_ERR_FOUND_DUPP_KEY;
-    this->share->data.erase(this->current_key);
+  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
+  if (toydb_table == toydb_tables->tables.end()) {
+    return HA_ERR_INTERNAL_ERROR;
   }
-  this->share->data[new_key] = std::string(val->ptr(), val->length());
-  this->current_key = new_key;
-  return 0;
+
+  std::vector<SupportedDBValue> row_data;
+
+  for (Field **field = this->table->field; *field != nullptr; field++) {
+    if ((*field)->is_null()) {
+      my_error(ER_BAD_NULL_ERROR, MYF(0), (*field)->field_name);
+      return ER_BAD_NULL_ERROR;
+    }
+
+    switch ((*field)->type()) {
+      case MYSQL_TYPE_LONGLONG: {
+        int64 val = (*field)->val_int();
+        row_data.emplace_back(val);
+        break;
+      }
+      case MYSQL_TYPE_VAR_STRING:
+      case MYSQL_TYPE_VARCHAR:
+      case MYSQL_TYPE_STRING: {
+        String val_buf;
+        String *val = (*field)->val_str(&val_buf);
+        row_data.emplace_back(std::string(val->ptr(), val->length()));
+        break;
+      }
+      default:
+        return HA_ERR_UNSUPPORTED;
+    }
+  }
+
+  // 実際に更新する行は直前にrnd_nextで返した行なので、`scan_index-1`の行を更新する
+  return toydb_table->second.update_row(this->scan_index - 1,
+                                        std::move(row_data));
 }
 
+/**
+ * @brief テーブルの行の削除
+ */
 int ha_toydb::delete_row(const uchar *) {
   DBUG_TRACE;
 
-  std::lock_guard<std::mutex> guard(this->share->data_mutex);
-  this->share->data.erase(this->current_key);
-  return 0;
+  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
+  if (toydb_table == toydb_tables->tables.end()) {
+    return HA_ERR_INTERNAL_ERROR;
+  }
+
+  // update_rowと同様に、削除する行は直前にrnd_nextで返した行なので、`scan_index-1`の行を削除する
+  return toydb_table->second.delete_row(this->scan_index - 1);
 }
 
 int ha_toydb::index_read_map(uchar *, const uchar *, key_part_map,

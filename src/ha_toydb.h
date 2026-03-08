@@ -88,7 +88,7 @@ class ToydbTable final {
   explicit ToydbTable(std::string name) : table_name(std::move(name)) {}
 
   int add_column(const std::string &name, enum_field_types type) {
-    if (!rows.empty()) {
+    if (!this->rows.empty()) {
       return HA_ERR_INTERNAL_ERROR;
     }
 
@@ -101,17 +101,44 @@ class ToydbTable final {
   }
 
   int insert_row(const std::vector<SupportedDBValue> row_data) {
-    if (row_data.size() != columns.size()) {
+    if (row_data.size() != this->columns.size()) {
       return ER_WRONG_VALUE_COUNT;
     }
 
-    for (size_t i = 0; i < columns.size(); ++i) {
-      if (!check_type_match(columns[i].type, row_data[i])) {
+    for (size_t i = 0; i < this->columns.size(); ++i) {
+      if (!check_type_match(this->columns[i].type, row_data[i])) {
         return ER_INCORRECT_TYPE;
       }
     }
 
     rows.push_back(row_data);
+    return 0;
+  }
+
+  int update_row(size_t row_index, std::vector<SupportedDBValue> row_data) {
+    if (row_index >= rows.size()) {
+      return HA_ERR_KEY_NOT_FOUND;
+    }
+
+    if (row_data.size() != this->columns.size()) {
+      return ER_WRONG_VALUE_COUNT;
+    }
+
+    for (size_t i = 0; i < this->columns.size(); ++i) {
+      if (!check_type_match(this->columns[i].type, row_data[i])) {
+        return ER_INCORRECT_TYPE;
+      }
+    }
+
+    rows[row_index] = std::move(row_data);
+    return 0;
+  }
+
+  int delete_row(size_t row_index) {
+    if (row_index >= rows.size()) {
+      return HA_ERR_KEY_NOT_FOUND;
+    }
+    rows.erase(rows.begin() + static_cast<ptrdiff_t>(row_index));
     return 0;
   }
 

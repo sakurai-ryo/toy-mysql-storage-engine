@@ -124,7 +124,7 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
     }
   }
 
-  rows.push_back(row_data);
+  rows.push_back(std::move(row_data));
   return 0;
 }
 
@@ -297,6 +297,7 @@ int ha_toydb::read_row_from_fields(std::vector<SupportedDBValue> &row_data) {
       dbug_tmp_use_all_columns(this->table, this->table->read_set);
 
   int ret = 0;
+  row_data.reserve(this->table->s->fields);
 
   for (Field **field = this->table->field; *field != nullptr; field++) {
     if ((*field)->is_null()) {
@@ -341,12 +342,11 @@ int ha_toydb::read_row_from_fields(std::vector<SupportedDBValue> &row_data) {
 int ha_toydb::write_row(uchar *) {
   DBUG_TRACE;
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-
   std::vector<SupportedDBValue> row_data;
   int ret = this->read_row_from_fields(row_data);
 
   if (ret == 0) {
+    std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
     ret = this->share->toydb_table->insert_row(std::move(row_data));
   }
 
@@ -361,13 +361,12 @@ int ha_toydb::write_row(uchar *) {
 int ha_toydb::update_row(const uchar *, uchar *) {
   DBUG_TRACE;
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-
   std::vector<SupportedDBValue> row_data;
   int ret = this->read_row_from_fields(row_data);
 
   // 実際に更新する行は直前にrnd_nextで返した行なので、`scan_index-1`の行を更新する
   if (ret == 0) {
+    std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
     ret = this->share->toydb_table->update_row(this->scan_index - 1,
                                                std::move(row_data));
   }

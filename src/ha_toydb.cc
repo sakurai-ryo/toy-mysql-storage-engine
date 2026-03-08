@@ -180,7 +180,7 @@ void ToydbTable::print_all() const {
   }
 }
 
-// --- Storage Engine ---
+// --- Storage Engine実装 ---
 
 static std::unique_ptr<ToydbTables> toydb_tables;
 
@@ -448,8 +448,7 @@ static int store_row_to_buf(TABLE *table, uchar *buf,
                             const std::vector<SupportedDBValue> &row) {
   // field->store()内でASSERT_COLUMN_MARKED_FOR_WRITEが呼ばれるため、
   // write_setに全カラムのビットを立てる必要がある
-  my_bitmap_map *old_map =
-      dbug_tmp_use_all_columns(table, table->write_set);
+  my_bitmap_map *old_map = dbug_tmp_use_all_columns(table, table->write_set);
 
   memset(buf, 0, table->s->null_bytes);
 
@@ -604,13 +603,7 @@ ha_rows ha_toydb::records_in_range(uint, key_range *, key_range *) {
   return 10;
 }
 
-static MYSQL_THDVAR_STR(last_create_thdvar, PLUGIN_VAR_MEMALLOC, nullptr,
-                        nullptr, nullptr, nullptr);
-
-static MYSQL_THDVAR_UINT(create_count_thdvar, 0, nullptr, nullptr, nullptr, 0,
-                         0, 1000, 0);
-
-int ha_toydb::create(const char *name, TABLE *table_info, HA_CREATE_INFO *,
+int ha_toydb::create(const char *, TABLE *table_info, HA_CREATE_INFO *,
                      dd::Table *) {
   DBUG_TRACE;
 

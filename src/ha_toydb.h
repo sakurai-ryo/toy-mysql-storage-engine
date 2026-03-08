@@ -154,11 +154,11 @@ class ha_toydb : public handler {
     return HA_MAX_REC_LENGTH;
   }
 
-  uint max_supported_keys() const override { return 0; }
+  uint max_supported_keys() const override { return MAX_KEY; }
 
-  uint max_supported_key_parts() const override { return 0; }
+  uint max_supported_key_parts() const override { return MAX_REF_PARTS; }
 
-  uint max_supported_key_length() const override { return 0; }
+  uint max_supported_key_length() const override { return MAX_KEY_LENGTH; }
 
   double scan_time() override {
     return (static_cast<double>(stats.records + stats.deleted) / 20.0) + 10;

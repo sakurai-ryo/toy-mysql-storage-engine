@@ -70,7 +70,7 @@ build/bin/mysqld --defaults-file=run/my.cnf --initialize-insecure --init-file=${
 dir = "mysql-server"
 # https://dev.mysql.com/doc/refman/8.4/en/starting-server.html
 run = """
-build/bin/mysqld --defaults-file=run/my.cnf --debug=d
+build/bin/mysqld --defaults-file=run/my.cnf
 """
 
 [tasks."mysql:stop"]

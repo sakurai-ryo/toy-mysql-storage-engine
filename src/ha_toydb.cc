@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -124,8 +125,10 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
     }
   }
 
-  ToydbRow row{this->next_row_id++, std::move(row_data)};
-  this->rows.push_back(std::move(row));
+  ToydbRowId id = this->next_row_id++;
+  ToydbIndexKey key{{static_cast<int64>(id)}};
+  ToydbRow row{id, std::move(row_data)};
+  this->rows.emplace(std::move(key), std::move(row));
   return 0;
 }
 
@@ -145,7 +148,9 @@ int ToydbTable::update_row(size_t row_index,
     }
   }
 
-  this->rows[row_index].values = std::move(row_data);
+  auto it = this->rows.begin();
+  std::advance(it, row_index);
+  it->second.values = std::move(row_data);
   return 0;
 }
 
@@ -153,7 +158,9 @@ int ToydbTable::delete_row(size_t row_index) {
   if (row_index >= this->rows.size()) {
     return HA_ERR_KEY_NOT_FOUND;
   }
-  this->rows.erase(this->rows.begin() + static_cast<ptrdiff_t>(row_index));
+  auto it = this->rows.begin();
+  std::advance(it, row_index);
+  this->rows.erase(it);
   return 0;
 }
 
@@ -161,7 +168,9 @@ size_t ToydbTable::row_count() const { return this->rows.size(); }
 
 const std::vector<SupportedDBValue> &ToydbTable::get_row(
     size_t row_index) const {
-  return this->rows.at(row_index).values;
+  auto it = this->rows.begin();
+  std::advance(it, row_index);
+  return it->second.values;
 }
 
 const std::vector<ToydbColumn> &ToydbTable::get_columns() const {
@@ -178,7 +187,7 @@ void ToydbTable::print_all() const {
   }
   std::cout << "\n----------------------------------\n";
 
-  for (const auto &row : this->rows) {
+  for (const auto &[key, row] : this->rows) {
     for (const auto &cell : row.values) {
       std::visit([](const auto &val) { std::cout << val << "\t| "; }, cell);
     }

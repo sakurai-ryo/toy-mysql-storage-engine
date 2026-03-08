@@ -105,7 +105,7 @@ class ToydbTable final {
 
   ToydbRowId next_row_id{1};
 
-  std::vector<ToydbRow> rows;
+  std::map<ToydbIndexKey, ToydbRow, ToydbKeyLess> rows;
 
  public:
   explicit ToydbTable(std::string name);

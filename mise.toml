@@ -26,7 +26,7 @@ ln -sfn ../../src storage/toydb
 
 cd build
 # TODO: pass number of cpu cores dynamically
-make -j12 --
+make -j16 --
 
 echo "Execute 'INSTALL PLUGIN toydb SONAME "ha_toydb.so";' to install the storage engine"
 """

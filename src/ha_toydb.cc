@@ -405,6 +405,7 @@ static int store_row_to_buf(TABLE *table, uchar *buf,
     std::visit(
         [field](const auto &val) {
           using T = std::decay_t<decltype(val)>;
+          // *bufとField::ptrは同じポインタなので、field->storeでbufに直接書き込むことができる
           if constexpr (std::is_same_v<T, int64>) {
             field->store(val, false);
           } else if constexpr (std::is_same_v<T, std::string>) {
@@ -441,6 +442,8 @@ int ha_toydb::rnd_next(uchar *buf) {
 
   if (this->scan_index >= toydb_table->second.row_count())
     return HA_ERR_END_OF_FILE;
+
+  ha_statistic_increment(&System_status_var::ha_read_rnd_next_count);
 
   const auto &row = toydb_table->second.get_row(this->scan_index);
   this->scan_index++;
@@ -557,7 +560,6 @@ int ha_toydb::create(const char *name, TABLE *table_info, HA_CREATE_INFO *,
   DBUG_TRACE;
 
   if (toydb_tables->tables.contains(name)) {
-    DBUG_PRINT("error", ("Table '%s' already exists", name));
     return HA_ERR_TABLE_EXIST;
   }
 

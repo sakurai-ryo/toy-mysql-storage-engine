@@ -169,13 +169,23 @@ class Toydb_share final : public Handler_share {
   ~Toydb_share() override { thr_lock_delete(&lock); }
 };
 
-struct ToydbCursor {
-  // 有効な行を指しているかのフラグ
+/**
+ * @brief テーブルスキャン（rnd_*）用のカーソル
+ */
+struct ToydbScanCursor {
   bool positioned{false};
-  // テーブルスキャン時の現在の行位置
+  // mapの先頭からの通し番号
   size_t current_pos{0};
-  // active_indexを保持する
+};
+
+/**
+ * @brief インデックススキャン（index_*）用のカーソル
+ */
+struct ToydbIndexCursor {
+  bool positioned{false};
+  // 利用するインデックスの番号
   uint mysql_index_no{MAX_KEY};
+  // 現在指しているClustered Indexのキー
   std::optional<ToydbIndexKey> current_index_key;
 };
 
@@ -188,8 +198,8 @@ class ha_toydb : public handler {
   Toydb_share *get_share();  ///< Get the share
 
   // テーブルスキャンとインデックススキャンでそれぞれカーソルを持つ
-  ToydbCursor scan_cursor;
-  ToydbCursor index_cursor;
+  ToydbScanCursor scan_cursor;
+  ToydbIndexCursor index_cursor;
 
  public:
   ha_toydb(handlerton *hton, TABLE_SHARE *table_arg);

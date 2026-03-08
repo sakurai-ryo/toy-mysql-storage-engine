@@ -517,7 +517,7 @@ int ha_toydb::delete_row(const uchar *) {
  */
 int ha_toydb::index_init(uint idx, bool) {
   DBUG_TRACE;
-  this->index_cursor = ToydbCursor{};
+  this->index_cursor = ToydbIndexCursor{};
   this->index_cursor.mysql_index_no = idx;
   this->scan_cursor.positioned = false;
   this->active_index = idx;
@@ -529,7 +529,7 @@ int ha_toydb::index_init(uint idx, bool) {
  */
 int ha_toydb::index_end() {
   DBUG_TRACE;
-  this->index_cursor = ToydbCursor{};
+  this->index_cursor = ToydbIndexCursor{};
   this->active_index = MAX_KEY;
   return 0;
 }
@@ -772,7 +772,7 @@ int ha_toydb::index_last(uchar *buf) {
  */
 int ha_toydb::rnd_init(bool) {
   DBUG_TRACE;
-  this->scan_cursor = ToydbCursor{};
+  this->scan_cursor = ToydbScanCursor{};
   this->index_cursor.positioned = false;
   return 0;
 }
@@ -825,7 +825,9 @@ int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
 
   if (row_index >= toydb_table->row_count()) return HA_ERR_KEY_NOT_FOUND;
 
-  this->scan_cursor.current_pos = row_index;
+  // rnd_nextと同じ規約に合わせて+1する
+  // update_row/delete_rowが current_pos - 1 で読み取った行を参照するため
+  this->scan_cursor.current_pos = row_index + 1;
   this->scan_cursor.positioned = true;
   const auto &row = toydb_table->get_row(row_index);
   return store_row_to_buf(this->table, buf, row);

@@ -25,6 +25,7 @@
 #include <sys/types.h>
 #include <cstddef>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <variant>
@@ -94,7 +95,10 @@ struct ToydbTables {
 class Toydb_share final : public Handler_share {
  public:
   THR_LOCK lock;
-  std::mutex data_mutex;
+
+  // TODO:
+  // 現状だと、write_rowなどの際にまるっとロックを取ってるので細かい粒度のロックに書き換えたい
+  std::unique_ptr<std::mutex> data_mutex;
 
   Toydb_share();
   ~Toydb_share() override { thr_lock_delete(&lock); }

@@ -194,7 +194,10 @@ static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table,
 
 static handlerton *toydb_hton;
 
-Toydb_share::Toydb_share() { thr_lock_init(&this->lock); }
+Toydb_share::Toydb_share()
+    : data_mutex(std::make_unique<std::mutex>()) {
+  thr_lock_init(&this->lock);
+}
 
 /**
  * Storage Engineの初期化を行う
@@ -280,6 +283,8 @@ int ha_toydb::close(void) {
 int ha_toydb::write_row(uchar *) {
   DBUG_TRACE;
 
+  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+
   auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
   if (toydb_table == toydb_tables->tables.end()) {
     DBUG_PRINT("error",
@@ -346,6 +351,8 @@ int ha_toydb::write_row(uchar *) {
 int ha_toydb::update_row(const uchar *, uchar *) {
   DBUG_TRACE;
 
+  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+
   auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
   if (toydb_table == toydb_tables->tables.end()) {
     return HA_ERR_INTERNAL_ERROR;
@@ -400,6 +407,8 @@ int ha_toydb::update_row(const uchar *, uchar *) {
  */
 int ha_toydb::delete_row(const uchar *) {
   DBUG_TRACE;
+
+  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
   auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
   if (toydb_table == toydb_tables->tables.end()) {
@@ -496,6 +505,8 @@ int ha_toydb::rnd_end() {
 int ha_toydb::rnd_next(uchar *buf) {
   DBUG_TRACE;
 
+  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+
   auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
   if (toydb_table == toydb_tables->tables.end()) return HA_ERR_INTERNAL_ERROR;
 
@@ -522,6 +533,8 @@ void ha_toydb::position(const uchar *) {
 int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
   DBUG_TRACE;
 
+  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+
   // refから行位置を復元する
   size_t row_index = my_get_ptr(pos, this->ref_length);
 
@@ -540,6 +553,8 @@ int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
  */
 int ha_toydb::info(uint) {
   DBUG_TRACE;
+
+  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
   auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
   if (toydb_table != toydb_tables->tables.end()) {
@@ -561,6 +576,8 @@ int ha_toydb::extra(enum ha_extra_function) {
 
 int ha_toydb::delete_all_rows() {
   DBUG_TRACE;
+
+  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
   auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
   if (toydb_table == toydb_tables->tables.end()) return HA_ERR_INTERNAL_ERROR;

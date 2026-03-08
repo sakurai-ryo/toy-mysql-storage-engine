@@ -33,6 +33,7 @@
 #include <variant>
 #include <vector>
 
+#include <mysqld_error.h>
 #include "my_base.h" /* ha_rows */
 #include "my_inttypes.h"
 #include "sql/handler.h" /* handler */
@@ -42,6 +43,11 @@ struct ToydbTables {
   std::map<std::string, ToydbTable> tables;
 };
 
+/**
+ * @brief サポートするデータ型
+ *
+ * Nullableは一旦サポート外
+ */
 using SupportedDBValue = std::variant<int64, std::string>;
 
 bool check_type_match(enum_field_types expected,
@@ -61,11 +67,17 @@ bool check_supported_type(enum_field_types type) {
          type == enum_field_types::MYSQL_TYPE_VAR_STRING;
 }
 
+/**
+ * @brief テーブルのカラム
+ */
 struct ToydbColumn {
   std::string name;
   enum_field_types type;
 };
 
+/**
+ * @brief テーブルの定義と実データ
+ */
 class ToydbTable final {
  private:
   std::string table_name;
@@ -75,34 +87,32 @@ class ToydbTable final {
  public:
   explicit ToydbTable(std::string name) : table_name(std::move(name)) {}
 
-  // TODO: my_errorでエラーコードを返すように書き換え
-  void add_column(const std::string &name, enum_field_types type) {
+  int add_column(const std::string &name, enum_field_types type) {
     if (!rows.empty()) {
-      throw std::logic_error(
-          "Cannot add column after rows have been inserted.");
+      return HA_ERR_INTERNAL_ERROR;
     }
 
     if (!check_supported_type(type)) {
-      throw std::invalid_argument("Unsupported column type: " +
-                                  std::to_string(type));
+      return HA_ERR_UNSUPPORTED;
     }
 
     columns.push_back({name, type});
+    return 0;
   }
 
-  void insert_row(const std::vector<SupportedDBValue> &row_data) {
+  int insert_row(const std::vector<SupportedDBValue> row_data) {
     if (row_data.size() != columns.size()) {
-      throw std::invalid_argument("Column count mismatch.");
+      return ER_WRONG_VALUE_COUNT;
     }
 
     for (size_t i = 0; i < columns.size(); ++i) {
       if (!check_type_match(columns[i].type, row_data[i])) {
-        throw std::invalid_argument("Type mismatch at column: " +
-                                    columns[i].name);
+        return ER_INCORRECT_TYPE;
       }
     }
 
     rows.push_back(row_data);
+    return 0;
   }
 
   void print_all() const {
@@ -123,8 +133,8 @@ class ToydbTable final {
 };
 
 /**
-  同じテーブルの全てのhandlerインスタンスで共有するデータ
-*/
+ * @brief 同じテーブルの全てのhandlerインスタンスで共有するデータ
+ */
 class Toydb_share final : public Handler_share {
  public:
   THR_LOCK lock;

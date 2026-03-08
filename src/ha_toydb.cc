@@ -115,6 +115,7 @@ Toydb_share *ha_toydb::get_share() {
 
   tmp_share = dynamic_cast<Toydb_share *>(this->get_ha_share_ptr());
   if (tmp_share == nullptr) {
+    // ここはhandlerクラス側がポインタを前提にしている
     tmp_share = new Toydb_share;
     this->set_ha_share_ptr(static_cast<Handler_share *>(tmp_share));
   }
@@ -136,7 +137,7 @@ int ha_toydb::open(const char *, int, uint, const dd::Table *) {
   DBUG_TRACE;
 
   this->share = this->get_share();
-  if (this->share == nullptr) return 1;
+  if (this->share == nullptr) return HA_ERR_INTERNAL_ERROR;
   thr_lock_data_init(&this->share->lock, &this->lock, nullptr);
 
   return 0;
@@ -147,17 +148,52 @@ int ha_toydb::close(void) {
   return 0;
 }
 
-int ha_toydb::write_row(uchar *) {
+/**
+ * @brief テーブルへの行の挿入
+ */
+int ha_toydb::write_row(uchar *buf) {
   DBUG_TRACE;
 
-  int64_t key = this->table->field[0]->val_int();
-  String val_buf;
-  String *val = this->table->field[1]->val_str(&val_buf);
+  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
+  if (toydb_table == toydb_tables->tables.end()) {
+    DBUG_PRINT("error",
+               ("Table '%s' not found", this->table->s->table_name.str));
+    return HA_ERR_INTERNAL_ERROR;
+  }
 
-  std::lock_guard<std::mutex> guard(this->share->data_mutex);
-  if (static_cast<unsigned int>(this->share->data.contains(key)) != 0U)
-    return HA_ERR_FOUND_DUPP_KEY;
-  this->share->data.emplace(key, std::string(val->ptr(), val->length()));
+  std::vector<SupportedDBValue> row_data;
+
+  for (Field **field = this->table->field; *field != nullptr; field++) {
+    if ((*field)->is_null()) {
+      my_error(ER_BAD_NULL_ERROR, MYF(0), (*field)->field_name);
+      return ER_BAD_NULL_ERROR;
+    }
+
+    switch ((*field)->type()) {
+      case MYSQL_TYPE_TINY:
+      case MYSQL_TYPE_SHORT:
+      case MYSQL_TYPE_LONG:
+      case MYSQL_TYPE_LONGLONG: {
+        // MySQLの整数型は全てint64_tで扱うことにする
+        int64 val = (*field)->val_int();
+        row_data.emplace_back(val);
+        break;
+      }
+      case MYSQL_TYPE_VAR_STRING:
+      case MYSQL_TYPE_VARCHAR:
+      case MYSQL_TYPE_STRING: {
+        String val_buf;
+        String *val = (*field)->val_str(&val_buf);
+        row_data.emplace_back(std::string(val->ptr(), val->length()));
+        break;
+      }
+      default:
+        DBUG_PRINT("error", ("Unsupported field type: %d", (*field)->type()));
+        return HA_ERR_UNSUPPORTED;
+    }
+  }
+
+  toydb_table->second.insert_row(std::move(row_data));
   return 0;
 }
 
@@ -335,23 +371,17 @@ int ha_toydb::create(const char *name, TABLE *table_info, HA_CREATE_INFO *,
                      dd::Table *) {
   DBUG_TRACE;
 
-  // check if the table already exists
   if (toydb_tables->tables.contains(name)) {
     DBUG_PRINT("error", ("Table '%s' already exists", name));
-    return 1;
+    return HA_ERR_TABLE_EXIST;
   }
 
   ToydbTable new_table(name);
 
-  auto i = 0;
-  while (table_info->field[i] != nullptr) {
-    DBUG_PRINT("field", ("Field %d: name=%s, type=%d", i,
-                         table_info->field[i]->field_name,
-                         table_info->field[i]->type()));
-
-    new_table.add_column(table_info->field[i]->field_name,
-                         table_info->field[i]->type());
-    i++;
+  for (Field **f = table_info->field; *f != nullptr; f++) {
+    DBUG_PRINT("field",
+               ("Field: name=%s, type=%d", (*f)->field_name, (*f)->type()));
+    new_table.add_column((*f)->field_name, (*f)->type());
   }
 
   toydb_tables->tables.emplace(name, std::move(new_table));

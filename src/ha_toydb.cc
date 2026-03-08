@@ -92,7 +92,7 @@ int ToydbTable::add_column(const std::string &name, enum_field_types type) {
   return 0;
 }
 
-int ToydbTable::insert_row(const std::vector<SupportedDBValue> &row_data) {
+int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
   if (row_data.size() != this->columns.size()) {
     return ER_WRONG_VALUE_COUNT;
   }

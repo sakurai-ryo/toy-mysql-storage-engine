@@ -50,6 +50,39 @@
  */
 using SupportedDBValue = std::variant<int64, std::string>;
 
+/**
+ * @brief 各行を一意に参照するためのId
+ */
+using ToydbRowId = uint16_t;
+
+/**
+ * @brief テーブル行
+ */
+struct ToydbRow {
+  ToydbRowId id;
+  std::vector<SupportedDBValue> values;
+};
+
+/**
+ * @brief インデックスのキー
+ */
+struct ToydbIndexKey {
+  // いつか複合キーをサポートできるようにvectorにしておく
+  std::vector<SupportedDBValue> key_parts;
+};
+
+/**
+ * @brief インデックスの比較関数
+ *
+ * std::mapでClustered Indexを実装する際の比較に利用する
+ */
+struct ToydbKeyLess {
+  bool operator()(const ToydbIndexKey &lhs, const ToydbIndexKey &rhs) const {
+    // ここでは単純にkey_partsの辞書順で比較する
+    return lhs.key_parts < rhs.key_parts;
+  };
+};
+
 static bool check_type_match(enum_field_types expected,
                              const SupportedDBValue &value);
 static bool check_supported_type(enum_field_types type);
@@ -69,7 +102,10 @@ class ToydbTable final {
  private:
   std::string table_name;
   std::vector<ToydbColumn> columns;
-  std::vector<std::vector<SupportedDBValue>> rows;
+
+  ToydbRowId next_row_id{1};
+
+  std::vector<ToydbRow> rows;
 
  public:
   explicit ToydbTable(std::string name);
@@ -85,6 +121,9 @@ class ToydbTable final {
   void print_all() const;
 };
 
+/**
+ * @brief 全テーブルの定義と実データを管理する
+ */
 struct ToydbTables {
   std::map<std::string, ToydbTable> tables;
 };
@@ -108,6 +147,13 @@ class Toydb_share final : public Handler_share {
   ~Toydb_share() override { thr_lock_delete(&lock); }
 };
 
+struct ToydbCursor {
+  bool positioned{false};
+  // active_indexを保持する
+  uint mysql_index_no{MAX_KEY};
+  std::optional<ToydbIndexKey> current_index_key;
+};
+
 /** @brief
   Class definition for the storage engine
 */
@@ -116,10 +162,9 @@ class ha_toydb : public handler {
   Toydb_share *share{};      ///< Shared lock info
   Toydb_share *get_share();  ///< Get the share
 
-  /**
-   * @brief テーブルスキャン時の行の現在位置
-   */
-  size_t scan_index = 0;
+  // テーブルスキャンとインデックススキャンでそれぞれカーソルを持つ
+  ToydbCursor scan_cursor;
+  ToydbCursor index_cursor;
 
  public:
   ha_toydb(handlerton *hton, TABLE_SHARE *table_arg);
@@ -131,16 +176,15 @@ class ha_toydb : public handler {
   const char *table_type() const override { return "TOYDB"; }
 
   /**
-    Replace key algorithm with one supported by SE, return the default key
-    algorithm for SE if explicit key algorithm was not provided.
-
-    @sa handler::adjust_index_algorithm().
-  */
+   * @brief デフォルトのインデックスアルゴリズム
+   *
+   * 今回はClustered IndexのみサポートするのでB-Treeを返す
+   */
   enum ha_key_alg get_default_index_algorithm() const override {
-    return HA_KEY_ALG_HASH;
+    return HA_KEY_ALG_BTREE;
   }
   bool is_index_algorithm_supported(enum ha_key_alg key_alg) const override {
-    return key_alg == HA_KEY_ALG_HASH;
+    return key_alg == HA_KEY_ALG_BTREE;
   }
 
   /** @brief
@@ -149,19 +193,13 @@ class ha_toydb : public handler {
   */
   ulonglong table_flags() const override { return HA_BINLOG_STMT_CAPABLE; }
 
-  /** @brief
-    This is a bitmap of flags that indicates how the storage engine
-    implements indexes. The current index flags are documented in
-    handler.h. If you do not implement indexes, just return zero here.
-
-      @details
-    part is the key part to check. First key part is 0.
-    If all_parts is set, MySQL wants to know the flags for the combined
-    index, up to and including 'part'.
-  */
-  ulong index_flags(uint inx [[maybe_unused]], uint part [[maybe_unused]],
-                    bool all_parts [[maybe_unused]]) const override {
-    return 0;
+  /**
+   * @brief サポートするIndexの機能を返す
+   *
+   * 一旦完全一致と前方一致だけサポート
+   */
+  ulong index_flags(uint, uint, bool) const override {
+    return HA_READ_NEXT | HA_READ_PREV | HA_READ_ORDER;
   }
 
   uint max_supported_record_length() const override {
@@ -193,8 +231,8 @@ class ha_toydb : public handler {
 
   int delete_row(const uchar *buf) override;
 
-  int index_read_map(uchar *buf, const uchar *key, key_part_map keypart_map,
-                     enum ha_rkey_function find_flag) override;
+  int index_read(uchar *buf, const uchar *key, uint key_len,
+                 enum ha_rkey_function find_flag) override;
 
   int index_next(uchar *buf) override;
 
@@ -215,12 +253,12 @@ class ha_toydb : public handler {
   int delete_all_rows(void) override;
   ha_rows records_in_range(uint inx, key_range *min_key,
                            key_range *max_key) override;
-  int delete_table(const char *from, const dd::Table *table_def) override;
+  int delete_table(const char *name, const dd::Table *) override;
   int rename_table(const char *from, const char *to,
                    const dd::Table *from_table_def,
                    dd::Table *to_table_def) override;
-  int create(const char *name, TABLE *form, HA_CREATE_INFO *create_info,
-             dd::Table *table_def) override;  ///< required
+  int create(const char *, TABLE *, HA_CREATE_INFO *table_info,
+             dd::Table *) override;  ///< required
 
   THR_LOCK_DATA **store_lock(
       THD *thd, THR_LOCK_DATA **to,

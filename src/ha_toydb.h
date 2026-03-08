@@ -227,6 +227,8 @@ class ha_toydb : public handler {
       enum thr_lock_type lock_type) override;  ///< required
 
  private:
+  int read_row_from_fields(std::vector<SupportedDBValue> &row_data);
+
   // Handler_shareのロックをRAIIで管理する
   // 内部ではmysql_mutex_lock,mysql_mutex_unlockを利用していてstd::lock_guardを使えないのでラッパーを作った
   class SharedHaDataLock {

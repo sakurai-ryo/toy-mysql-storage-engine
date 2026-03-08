@@ -286,15 +286,9 @@ int ha_toydb::close(void) {
 }
 
 /**
- * @brief テーブルへの行の挿入
+ * @brief handler::table::fieldからrow_dataへデータを読み出す
  */
-int ha_toydb::write_row(uchar *) {
-  DBUG_TRACE;
-
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-
-  auto *toydb_table = this->share->toydb_table;
-
+int ha_toydb::read_row_from_fields(std::vector<SupportedDBValue> &row_data) {
   // handler::table::fieldからデータの読み取り（val_int()/val_str()）を呼ぶ前にread_setをセットする必要がある
   // read_setはビットマップで、どのフィールドを読み取るかを指定するためのもの
   // ただ今回は固定で全てのフィールドの読み書きを行うことにするので、全てのビットを立てる
@@ -302,7 +296,6 @@ int ha_toydb::write_row(uchar *) {
   my_bitmap_map *old_map =
       dbug_tmp_use_all_columns(this->table, this->table->read_set);
 
-  std::vector<SupportedDBValue> row_data;
   int ret = 0;
 
   for (Field **field = this->table->field; *field != nullptr; field++) {
@@ -338,11 +331,25 @@ int ha_toydb::write_row(uchar *) {
     if (ret != 0) break;
   }
 
+  dbug_tmp_restore_column_map(this->table->read_set, old_map);
+  return ret;
+}
+
+/**
+ * @brief テーブルへの行の挿入
+ */
+int ha_toydb::write_row(uchar *) {
+  DBUG_TRACE;
+
+  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+
+  std::vector<SupportedDBValue> row_data;
+  int ret = this->read_row_from_fields(row_data);
+
   if (ret == 0) {
-    ret = toydb_table->insert_row(std::move(row_data));
+    ret = this->share->toydb_table->insert_row(std::move(row_data));
   }
 
-  dbug_tmp_restore_column_map(this->table->read_set, old_map);
   return ret;
 }
 
@@ -356,48 +363,15 @@ int ha_toydb::update_row(const uchar *, uchar *) {
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  auto *toydb_table = this->share->toydb_table;
-
-  my_bitmap_map *old_map =
-      dbug_tmp_use_all_columns(this->table, this->table->read_set);
-
   std::vector<SupportedDBValue> row_data;
-  int ret = 0;
-
-  for (Field **field = this->table->field; *field != nullptr; field++) {
-    if ((*field)->is_null()) {
-      my_error(ER_BAD_NULL_ERROR, MYF(0), (*field)->field_name);
-      ret = ER_BAD_NULL_ERROR;
-      break;
-    }
-
-    switch ((*field)->type()) {
-      case MYSQL_TYPE_LONGLONG: {
-        int64 val = (*field)->val_int();
-        row_data.emplace_back(val);
-        break;
-      }
-      case MYSQL_TYPE_VAR_STRING:
-      case MYSQL_TYPE_VARCHAR:
-      case MYSQL_TYPE_STRING: {
-        String val_buf;
-        String *val = (*field)->val_str(&val_buf);
-        row_data.emplace_back(std::string(val->ptr(), val->length()));
-        break;
-      }
-      default:
-        ret = HA_ERR_UNSUPPORTED;
-        break;
-    }
-    if (ret != 0) break;
-  }
+  int ret = this->read_row_from_fields(row_data);
 
   // 実際に更新する行は直前にrnd_nextで返した行なので、`scan_index-1`の行を更新する
   if (ret == 0) {
-    ret = toydb_table->update_row(this->scan_index - 1, std::move(row_data));
+    ret = this->share->toydb_table->update_row(this->scan_index - 1,
+                                               std::move(row_data));
   }
 
-  dbug_tmp_restore_column_map(this->table->read_set, old_map);
   return ret;
 }
 

@@ -124,13 +124,14 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
     }
   }
 
-  rows.push_back(std::move(row_data));
+  ToydbRow row{this->next_row_id++, std::move(row_data)};
+  this->rows.push_back(std::move(row));
   return 0;
 }
 
 int ToydbTable::update_row(size_t row_index,
                            std::vector<SupportedDBValue> row_data) {
-  if (row_index >= rows.size()) {
+  if (row_index >= this->rows.size()) {
     return HA_ERR_KEY_NOT_FOUND;
   }
 
@@ -144,30 +145,30 @@ int ToydbTable::update_row(size_t row_index,
     }
   }
 
-  rows[row_index] = std::move(row_data);
+  this->rows[row_index].values = std::move(row_data);
   return 0;
 }
 
 int ToydbTable::delete_row(size_t row_index) {
-  if (row_index >= rows.size()) {
+  if (row_index >= this->rows.size()) {
     return HA_ERR_KEY_NOT_FOUND;
   }
-  rows.erase(rows.begin() + static_cast<ptrdiff_t>(row_index));
+  this->rows.erase(this->rows.begin() + static_cast<ptrdiff_t>(row_index));
   return 0;
 }
 
-size_t ToydbTable::row_count() const { return rows.size(); }
+size_t ToydbTable::row_count() const { return this->rows.size(); }
 
 const std::vector<SupportedDBValue> &ToydbTable::get_row(
     size_t row_index) const {
-  return rows.at(row_index);
+  return this->rows.at(row_index).values;
 }
 
 const std::vector<ToydbColumn> &ToydbTable::get_columns() const {
-  return columns;
+  return this->columns;
 }
 
-void ToydbTable::clear_rows() { rows.clear(); }
+void ToydbTable::clear_rows() { this->rows.clear(); }
 
 void ToydbTable::print_all() const {
   std::cout << "--- Table: " << this->table_name << " ---\n";
@@ -178,7 +179,7 @@ void ToydbTable::print_all() const {
   std::cout << "\n----------------------------------\n";
 
   for (const auto &row : this->rows) {
-    for (const auto &cell : row) {
+    for (const auto &cell : row.values) {
       std::visit([](const auto &val) { std::cout << val << "\t| "; }, cell);
     }
     std::cout << '\n';
@@ -378,11 +379,11 @@ int ha_toydb::update_row(const uchar *, uchar *) {
   std::vector<SupportedDBValue> row_data;
   int ret = this->read_row_from_fields(row_data);
 
-  // 実際に更新する行は直前にrnd_nextで返した行なので、`scan_index-1`の行を更新する
+  // 実際に更新する行は直前にrnd_nextで返した行なので、`current_pos-1`の行を更新する
   if (ret == 0) {
     std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-    ret = this->share->toydb_table->update_row(this->scan_index - 1,
-                                               std::move(row_data));
+    ret = this->share->toydb_table->update_row(
+        this->scan_cursor.current_pos - 1, std::move(row_data));
   }
 
   return ret;
@@ -396,44 +397,34 @@ int ha_toydb::delete_row(const uchar *) {
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  // update_rowと同様に、削除する行は直前にrnd_nextで返した行なので、`scan_index-1`の行を削除する
-  return this->share->toydb_table->delete_row(this->scan_index - 1);
+  // update_rowと同様に、削除する行は直前にrnd_nextで返した行なので、`current_pos-1`の行を削除する
+  return this->share->toydb_table->delete_row(this->scan_cursor.current_pos -
+                                              1);
 }
 
-int ha_toydb::index_read_map(uchar *, const uchar *, key_part_map,
-                             enum ha_rkey_function) {
-  int rc = 0;
+int ha_toydb::index_read(uchar *, const uchar *, uint, enum ha_rkey_function) {
   DBUG_TRACE;
-  rc = HA_ERR_WRONG_COMMAND;
-  return rc;
+  return HA_ERR_WRONG_COMMAND;
 }
 
 int ha_toydb::index_next(uchar *) {
-  int rc = 0;
   DBUG_TRACE;
-  rc = HA_ERR_WRONG_COMMAND;
-  return rc;
+  return HA_ERR_WRONG_COMMAND;
 }
 
 int ha_toydb::index_prev(uchar *) {
-  int rc = 0;
   DBUG_TRACE;
-  rc = HA_ERR_WRONG_COMMAND;
-  return rc;
+  return HA_ERR_WRONG_COMMAND;
 }
 
 int ha_toydb::index_first(uchar *) {
-  int rc = 0;
   DBUG_TRACE;
-  rc = HA_ERR_WRONG_COMMAND;
-  return rc;
+  return HA_ERR_WRONG_COMMAND;
 }
 
 int ha_toydb::index_last(uchar *) {
-  int rc = 0;
   DBUG_TRACE;
-  rc = HA_ERR_WRONG_COMMAND;
-  return rc;
+  return HA_ERR_WRONG_COMMAND;
 }
 
 /**
@@ -471,7 +462,7 @@ static int store_row_to_buf(TABLE *table, uchar *buf,
  */
 int ha_toydb::rnd_init(bool) {
   DBUG_TRACE;
-  this->scan_index = 0;
+  this->scan_cursor = ToydbCursor{};
   return 0;
 }
 
@@ -490,12 +481,14 @@ int ha_toydb::rnd_next(uchar *buf) {
 
   auto *toydb_table = this->share->toydb_table;
 
-  if (this->scan_index >= toydb_table->row_count()) return HA_ERR_END_OF_FILE;
+  if (this->scan_cursor.current_pos >= toydb_table->row_count())
+    return HA_ERR_END_OF_FILE;
 
   ha_statistic_increment(&System_status_var::ha_read_rnd_next_count);
 
-  const auto &row = toydb_table->get_row(this->scan_index);
-  this->scan_index++;
+  const auto &row = toydb_table->get_row(this->scan_cursor.current_pos);
+  this->scan_cursor.current_pos++;
+  this->scan_cursor.positioned = true;
   return store_row_to_buf(this->table, buf, row);
 }
 
@@ -506,7 +499,7 @@ int ha_toydb::rnd_next(uchar *buf) {
  */
 void ha_toydb::position(const uchar *) {
   DBUG_TRACE;
-  my_store_ptr(this->ref, this->ref_length, this->scan_index);
+  my_store_ptr(this->ref, this->ref_length, this->scan_cursor.current_pos);
 }
 
 int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
@@ -521,7 +514,8 @@ int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
 
   if (row_index >= toydb_table->row_count()) return HA_ERR_KEY_NOT_FOUND;
 
-  this->scan_index = row_index;
+  this->scan_cursor.current_pos = row_index;
+  this->scan_cursor.positioned = true;
   const auto &row = toydb_table->get_row(row_index);
   return store_row_to_buf(this->table, buf, row);
 }

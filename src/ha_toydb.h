@@ -149,6 +149,8 @@ class Toydb_share final : public Handler_share {
 
 struct ToydbCursor {
   bool positioned{false};
+  // テーブルスキャン時の現在の行位置
+  size_t current_pos{0};
   // active_indexを保持する
   uint mysql_index_no{MAX_KEY};
   std::optional<ToydbIndexKey> current_index_key;

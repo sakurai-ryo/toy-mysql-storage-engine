@@ -8,7 +8,7 @@ cd mysql-server
 mkdir -p build
 cd build
 
-cmake .. -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../boost -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake .. -DWITH_DEBUG=1 -DDOWNLOAD_BOOST=1 -DWITH_BOOST=../boost -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 """
 
 [tasks."mysql:gen-header"]
@@ -26,7 +26,7 @@ ln -sfn ../../src storage/toydb
 
 cd build
 # TODO: pass number of cpu cores dynamically
-make -j12
+make -j12 --
 
 echo "Execute 'INSTALL PLUGIN toydb SONAME "ha_toydb.so";' to install the storage engine"
 """

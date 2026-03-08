@@ -23,25 +23,18 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 #include <sys/types.h>
-
 #include <cstddef>
-#include <cstdint>
 #include <map>
 #include <mutex>
 #include <string>
-#include <utility>
 #include <variant>
 #include <vector>
 
-#include <mysqld_error.h>
+#include "field_types.h"
 #include "my_base.h" /* ha_rows */
 #include "my_inttypes.h"
 #include "sql/handler.h" /* handler */
 #include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
-
-struct ToydbTables {
-  std::map<std::string, ToydbTable> tables;
-};
 
 /**
  * @brief サポートするデータ型
@@ -50,22 +43,9 @@ struct ToydbTables {
  */
 using SupportedDBValue = std::variant<int64, std::string>;
 
-bool check_type_match(enum_field_types expected,
-                      const SupportedDBValue &value) {
-  switch (expected) {
-    case enum_field_types::MYSQL_TYPE_LONGLONG:
-      return std::holds_alternative<int64>(value);
-    case enum_field_types::MYSQL_TYPE_VAR_STRING:
-      return std::holds_alternative<std::string>(value);
-    default:
-      return false;
-  }
-}
-
-bool check_supported_type(enum_field_types type) {
-  return type == enum_field_types::MYSQL_TYPE_LONGLONG ||
-         type == enum_field_types::MYSQL_TYPE_VAR_STRING;
-}
+static bool check_type_match(enum_field_types expected,
+                             const SupportedDBValue &value);
+static bool check_supported_type(enum_field_types type);
 
 /**
  * @brief テーブルのカラム
@@ -85,78 +65,21 @@ class ToydbTable final {
   std::vector<std::vector<SupportedDBValue>> rows;
 
  public:
-  explicit ToydbTable(std::string name) : table_name(std::move(name)) {}
+  explicit ToydbTable(std::string name);
 
-  int add_column(const std::string &name, enum_field_types type) {
-    if (!this->rows.empty()) {
-      return HA_ERR_INTERNAL_ERROR;
-    }
+  int add_column(const std::string &name, enum_field_types type);
+  int insert_row(const std::vector<SupportedDBValue> row_data);
+  int update_row(size_t row_index, std::vector<SupportedDBValue> row_data);
+  int delete_row(size_t row_index);
+  size_t row_count() const;
+  const std::vector<SupportedDBValue> &get_row(size_t row_index) const;
+  const std::vector<ToydbColumn> &get_columns() const;
+  void clear_rows();
+  void print_all() const;
+};
 
-    if (!check_supported_type(type)) {
-      return HA_ERR_UNSUPPORTED;
-    }
-
-    columns.push_back({name, type});
-    return 0;
-  }
-
-  int insert_row(const std::vector<SupportedDBValue> row_data) {
-    if (row_data.size() != this->columns.size()) {
-      return ER_WRONG_VALUE_COUNT;
-    }
-
-    for (size_t i = 0; i < this->columns.size(); ++i) {
-      if (!check_type_match(this->columns[i].type, row_data[i])) {
-        return ER_INCORRECT_TYPE;
-      }
-    }
-
-    rows.push_back(row_data);
-    return 0;
-  }
-
-  int update_row(size_t row_index, std::vector<SupportedDBValue> row_data) {
-    if (row_index >= rows.size()) {
-      return HA_ERR_KEY_NOT_FOUND;
-    }
-
-    if (row_data.size() != this->columns.size()) {
-      return ER_WRONG_VALUE_COUNT;
-    }
-
-    for (size_t i = 0; i < this->columns.size(); ++i) {
-      if (!check_type_match(this->columns[i].type, row_data[i])) {
-        return ER_INCORRECT_TYPE;
-      }
-    }
-
-    rows[row_index] = std::move(row_data);
-    return 0;
-  }
-
-  int delete_row(size_t row_index) {
-    if (row_index >= rows.size()) {
-      return HA_ERR_KEY_NOT_FOUND;
-    }
-    rows.erase(rows.begin() + static_cast<ptrdiff_t>(row_index));
-    return 0;
-  }
-
-  void print_all() const {
-    std::cout << "--- Table: " << this->table_name << " ---\n";
-
-    for (const auto &col : this->columns) {
-      std::cout << col.name << "\t| ";
-    }
-    std::cout << "\n----------------------------------\n";
-
-    for (const auto &row : this->rows) {
-      for (const auto &cell : row) {
-        std::visit([](const auto &val) { std::cout << val << "\t| "; }, cell);
-      }
-      std::cout << '\n';
-    }
-  }
+struct ToydbTables {
+  std::map<std::string, ToydbTable> tables;
 };
 
 /**
@@ -179,10 +102,10 @@ class ha_toydb : public handler {
   Toydb_share *share{};      ///< Shared lock info
   Toydb_share *get_share();  ///< Get the share
 
-  /// Scan state for rnd_next
-  std::vector<std::pair<int64_t, std::string>> scan_rows;
+  /**
+   * @brief テーブルスキャン時の行の現在位置
+   */
   size_t scan_index = 0;
-  int64_t current_key = 0;
 
  public:
   ha_toydb(handlerton *hton, TABLE_SHARE *table_arg);

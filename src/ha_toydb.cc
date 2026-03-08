@@ -25,35 +25,18 @@
 #include "ha_toydb.h"
 
 #include <cassert>
-#include <climits>
-#include <cstdint>
 #include <cstdio>
 #include <cstring>
-
-// #include "my_dbug.h"
-// #include "mysql/plugin.h"
-// #include "sql/table.h"
-// #include "sql/field.h"
-// #include "nulls.h"
-// #include "sql/sql_class.h"
-// #include "sql/sql_plugin.h"
-// #include "typelib.h"
+#include <iostream>
 
 #include <fcntl.h>
-#include <mysql/plugin.h>
 #include <sys/types.h>
-#include <mutex>
 
-#include "field_types.h"
 #include "my_base.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
-#include "my_psi_config.h"
-#include "mysql/plugin.h"
-#include "mysql/service_mysql_alloc.h"
 #include "mysql/service_thd_alloc.h"
 #include "mysql/status_var.h"
-#include "nulls.h"
 #include "sql/derror.h"
 #include "sql/field.h"
 #include "sql/handler.h"
@@ -63,9 +46,114 @@
 #include "sql/sql_lex.h"
 #include "sql/sql_plugin.h"
 #include "sql/table.h"
-#include "template_utils.h"
 #include "thr_lock.h"
 #include "typelib.h"
+
+static bool check_type_match(enum_field_types expected,
+                             const SupportedDBValue &value) {
+  switch (expected) {
+    case enum_field_types::MYSQL_TYPE_LONGLONG:
+      return std::holds_alternative<int64>(value);
+    case enum_field_types::MYSQL_TYPE_VAR_STRING:
+      return std::holds_alternative<std::string>(value);
+    default:
+      return false;
+  }
+}
+
+static bool check_supported_type(enum_field_types type) {
+  return type == enum_field_types::MYSQL_TYPE_LONGLONG ||
+         type == enum_field_types::MYSQL_TYPE_VAR_STRING;
+}
+
+ToydbTable::ToydbTable(std::string name) : table_name(std::move(name)) {}
+
+int ToydbTable::add_column(const std::string &name, enum_field_types type) {
+  if (!this->rows.empty()) {
+    return HA_ERR_INTERNAL_ERROR;
+  }
+
+  if (!check_supported_type(type)) {
+    return HA_ERR_UNSUPPORTED;
+  }
+
+  columns.push_back({name, type});
+  return 0;
+}
+
+int ToydbTable::insert_row(const std::vector<SupportedDBValue> row_data) {
+  if (row_data.size() != this->columns.size()) {
+    return ER_WRONG_VALUE_COUNT;
+  }
+
+  for (size_t i = 0; i < this->columns.size(); ++i) {
+    if (!check_type_match(this->columns[i].type, row_data[i])) {
+      return ER_INCORRECT_TYPE;
+    }
+  }
+
+  rows.push_back(row_data);
+  return 0;
+}
+
+int ToydbTable::update_row(size_t row_index,
+                           std::vector<SupportedDBValue> row_data) {
+  if (row_index >= rows.size()) {
+    return HA_ERR_KEY_NOT_FOUND;
+  }
+
+  if (row_data.size() != this->columns.size()) {
+    return ER_WRONG_VALUE_COUNT;
+  }
+
+  for (size_t i = 0; i < this->columns.size(); ++i) {
+    if (!check_type_match(this->columns[i].type, row_data[i])) {
+      return ER_INCORRECT_TYPE;
+    }
+  }
+
+  rows[row_index] = std::move(row_data);
+  return 0;
+}
+
+int ToydbTable::delete_row(size_t row_index) {
+  if (row_index >= rows.size()) {
+    return HA_ERR_KEY_NOT_FOUND;
+  }
+  rows.erase(rows.begin() + static_cast<ptrdiff_t>(row_index));
+  return 0;
+}
+
+size_t ToydbTable::row_count() const { return rows.size(); }
+
+const std::vector<SupportedDBValue> &ToydbTable::get_row(
+    size_t row_index) const {
+  return rows.at(row_index);
+}
+
+const std::vector<ToydbColumn> &ToydbTable::get_columns() const {
+  return columns;
+}
+
+void ToydbTable::clear_rows() { rows.clear(); }
+
+void ToydbTable::print_all() const {
+  std::cout << "--- Table: " << this->table_name << " ---\n";
+
+  for (const auto &col : this->columns) {
+    std::cout << col.name << "\t| ";
+  }
+  std::cout << "\n----------------------------------\n";
+
+  for (const auto &row : this->rows) {
+    for (const auto &cell : row) {
+      std::visit([](const auto &val) { std::cout << val << "\t| "; }, cell);
+    }
+    std::cout << '\n';
+  }
+}
+
+// --- Storage Engine ---
 
 static ToydbTables *toydb_tables;
 
@@ -130,7 +218,9 @@ static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table, bool,
 
 ha_toydb::ha_toydb(handlerton *hton, TABLE_SHARE *table_arg)
     : handler(hton, table_arg) {
-  this->ref_length = sizeof(int64_t);
+  // ref_lengthはrefに保存する値のサイズを指定するためのメンバ
+  // handler::refには行インデックスを保存するためsize_tのサイズを入れる
+  this->ref_length = sizeof(size_t);
 }
 
 int ha_toydb::open(const char *, int, uint, const dd::Table *) {
@@ -292,67 +382,105 @@ int ha_toydb::index_last(uchar *) {
   return rc;
 }
 
+/**
+ * @brief ToydbTableの行データをMySQLのレコードバッファに書き込む
+ */
+static int store_row_to_buf(TABLE *table, uchar *buf,
+                            const std::vector<SupportedDBValue> &row) {
+  memset(buf, 0, table->s->null_bytes);
+
+  for (size_t i = 0; i < row.size(); i++) {
+    Field *field = table->field[i];
+    std::visit(
+        [field](const auto &val) {
+          using T = std::decay_t<decltype(val)>;
+          if constexpr (std::is_same_v<T, int64>) {
+            field->store(val, false);
+          } else if constexpr (std::is_same_v<T, std::string>) {
+            field->store(val.c_str(), val.length(), system_charset_info);
+          }
+        },
+        row[i]);
+  }
+  return 0;
+}
+
+/**
+ * @brief テーブルスキャン操作の初期化を行う
+ */
 int ha_toydb::rnd_init(bool) {
   DBUG_TRACE;
-
-  std::lock_guard<std::mutex> guard(this->share->data_mutex);
-  this->scan_rows.assign(this->share->data.begin(), this->share->data.end());
   this->scan_index = 0;
   return 0;
 }
 
 int ha_toydb::rnd_end() {
   DBUG_TRACE;
-  this->scan_rows.clear();
   return 0;
 }
 
+/**
+ * @brief テーブルスキャン操作で次の行を取得する
+ */
 int ha_toydb::rnd_next(uchar *buf) {
   DBUG_TRACE;
 
-  if (this->scan_index >= this->scan_rows.size()) return HA_ERR_END_OF_FILE;
+  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
+  if (toydb_table == toydb_tables->tables.end()) return HA_ERR_INTERNAL_ERROR;
 
-  auto &[key, val] = this->scan_rows[this->scan_index++];
-  this->current_key = key;
+  if (this->scan_index >= toydb_table->second.row_count())
+    return HA_ERR_END_OF_FILE;
 
-  memset(buf, 0, this->table->s->null_bytes);
-  this->table->field[0]->store(key, false);
-  this->table->field[1]->store(val.c_str(), val.length(), system_charset_info);
-  return 0;
+  const auto &row = toydb_table->second.get_row(this->scan_index);
+  this->scan_index++;
+  return store_row_to_buf(this->table, buf, row);
 }
 
+/**
+ * @brief テーブルスキャン操作の現在位置を保存する
+ *
+ * handler::refに現在の行位置を保存して、サーバー層がrnd_posで任意位置から読み出せるようにする
+ */
 void ha_toydb::position(const uchar *) {
   DBUG_TRACE;
-  memcpy(this->ref, &this->current_key, sizeof(this->current_key));
+  my_store_ptr(this->ref, this->ref_length, this->scan_index);
 }
 
 int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
   DBUG_TRACE;
 
-  int64_t key = 0;
-  memcpy(&key, pos, sizeof(key));
+  // refから行位置を復元する
+  size_t row_index = my_get_ptr(pos, this->ref_length);
 
-  std::lock_guard<std::mutex> guard(this->share->data_mutex);
-  auto it = this->share->data.find(key);
-  if (it == this->share->data.end()) return HA_ERR_KEY_NOT_FOUND;
+  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
+  if (toydb_table == toydb_tables->tables.end()) return HA_ERR_INTERNAL_ERROR;
 
-  this->current_key = key;
-  memset(buf, 0, this->table->s->null_bytes);
-  this->table->field[0]->store(key, false);
-  this->table->field[1]->store(it->second.c_str(), it->second.length(),
-                               system_charset_info);
-  return 0;
+  if (row_index >= toydb_table->second.row_count()) return HA_ERR_KEY_NOT_FOUND;
+
+  this->scan_index = row_index;
+  const auto &row = toydb_table->second.get_row(row_index);
+  return store_row_to_buf(this->table, buf, row);
 }
 
+/**
+ * @brief optimizerへテーブルの統計情報を提供する
+ */
 int ha_toydb::info(uint) {
   DBUG_TRACE;
-  if (this->share != nullptr) {
-    std::lock_guard<std::mutex> guard(this->share->data_mutex);
-    this->stats.records = this->share->data.size();
+
+  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
+  if (toydb_table != toydb_tables->tables.end()) {
+    // 一旦行数だけ追加する
+    this->stats.records = toydb_table->second.row_count();
   }
   return 0;
 }
 
+/**
+ * @brief mysql側からSEに対してヒントを渡すためのメソッド
+ *
+ * 今回は特になし
+ */
 int ha_toydb::extra(enum ha_extra_function) {
   DBUG_TRACE;
   return 0;
@@ -360,8 +488,11 @@ int ha_toydb::extra(enum ha_extra_function) {
 
 int ha_toydb::delete_all_rows() {
   DBUG_TRACE;
-  std::lock_guard<std::mutex> guard(this->share->data_mutex);
-  this->share->data.clear();
+
+  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
+  if (toydb_table == toydb_tables->tables.end()) return HA_ERR_INTERNAL_ERROR;
+
+  toydb_table->second.clear_rows();
   return 0;
 }
 
@@ -383,15 +514,25 @@ int ha_toydb::delete_table(const char *, const dd::Table *) {
   return 0;
 }
 
+/**
+ * @brief テーブルのリネーム
+ *
+ * 今回はサポートなし
+ */
 int ha_toydb::rename_table(const char *, const char *, const dd::Table *,
                            dd::Table *) {
   DBUG_TRACE;
   return HA_ERR_WRONG_COMMAND;
 }
 
+/**
+ * @brief 渡されたレンジ内のテーブルの行数を返す
+ *
+ * 今回は適当な行数を返す
+ */
 ha_rows ha_toydb::records_in_range(uint, key_range *, key_range *) {
   DBUG_TRACE;
-  return 10;  // low number to force index usage
+  return 10;
 }
 
 static MYSQL_THDVAR_STR(last_create_thdvar, PLUGIN_VAR_MEMALLOC, nullptr,
@@ -425,132 +566,6 @@ int ha_toydb::create(const char *name, TABLE *table_info, HA_CREATE_INFO *,
 static struct st_mysql_storage_engine toydb_storage_engine = {
     MYSQL_HANDLERTON_INTERFACE_VERSION};
 
-static ulong srv_enum_var = 0;
-static ulong srv_ulong_var = 0;
-static double srv_double_var = 0;
-static int srv_signed_int_var = 0;
-static long srv_signed_long_var = 0;
-static longlong srv_signed_longlong_var = 0;
-
-static const char *enum_var_names[] = {"e1", "e2", NullS};
-
-static TYPELIB enum_var_typelib = {array_elements(enum_var_names) - 1,
-                                   "enum_var_typelib", enum_var_names, nullptr};
-
-static MYSQL_SYSVAR_ENUM(enum_var,                        // name
-                         srv_enum_var,                    // varname
-                         PLUGIN_VAR_RQCMDARG,             // opt
-                         "Sample ENUM system variable.",  // comment
-                         nullptr,                         // check
-                         nullptr,                         // update
-                         0,                               // def
-                         &enum_var_typelib);              // typelib
-
-static MYSQL_SYSVAR_ULONG(ulong_var, srv_ulong_var, PLUGIN_VAR_RQCMDARG,
-                          "0..1000", nullptr, nullptr, 8, 0, 1000, 0);
-
-static MYSQL_SYSVAR_DOUBLE(double_var, srv_double_var, PLUGIN_VAR_RQCMDARG,
-                           "0.500000..1000.500000", nullptr, nullptr, 8.5, 0.5,
-                           1000.5,
-                           0);  // reserved always 0
-
-static MYSQL_THDVAR_DOUBLE(double_thdvar, PLUGIN_VAR_RQCMDARG,
-                           "0.500000..1000.500000", nullptr, nullptr, 8.5, 0.5,
-                           1000.5, 0);
-
-static MYSQL_SYSVAR_INT(signed_int_var, srv_signed_int_var, PLUGIN_VAR_RQCMDARG,
-                        "INT_MIN..INT_MAX", nullptr, nullptr, -10, INT_MIN,
-                        INT_MAX, 0);
-
-static MYSQL_THDVAR_INT(signed_int_thdvar, PLUGIN_VAR_RQCMDARG,
-                        "INT_MIN..INT_MAX", nullptr, nullptr, -10, INT_MIN,
-                        INT_MAX, 0);
-
-static MYSQL_SYSVAR_LONG(signed_long_var, srv_signed_long_var,
-                         PLUGIN_VAR_RQCMDARG, "LONG_MIN..LONG_MAX", nullptr,
-                         nullptr, -10, LONG_MIN, LONG_MAX, 0);
-
-static MYSQL_THDVAR_LONG(signed_long_thdvar, PLUGIN_VAR_RQCMDARG,
-                         "LONG_MIN..LONG_MAX", nullptr, nullptr, -10, LONG_MIN,
-                         LONG_MAX, 0);
-
-static MYSQL_SYSVAR_LONGLONG(signed_longlong_var, srv_signed_longlong_var,
-                             PLUGIN_VAR_RQCMDARG, "LLONG_MIN..LLONG_MAX",
-                             nullptr, nullptr, -10, LLONG_MIN, LLONG_MAX, 0);
-
-static MYSQL_THDVAR_LONGLONG(signed_longlong_thdvar, PLUGIN_VAR_RQCMDARG,
-                             "LLONG_MIN..LLONG_MAX", nullptr, nullptr, -10,
-                             LLONG_MIN, LLONG_MAX, 0);
-
-static SYS_VAR *toydb_system_variables[] = {
-    MYSQL_SYSVAR(enum_var),
-    MYSQL_SYSVAR(ulong_var),
-    MYSQL_SYSVAR(double_var),
-    MYSQL_SYSVAR(double_thdvar),
-    MYSQL_SYSVAR(last_create_thdvar),
-    MYSQL_SYSVAR(create_count_thdvar),
-    MYSQL_SYSVAR(signed_int_var),
-    MYSQL_SYSVAR(signed_int_thdvar),
-    MYSQL_SYSVAR(signed_long_var),
-    MYSQL_SYSVAR(signed_long_thdvar),
-    MYSQL_SYSVAR(signed_longlong_var),
-    MYSQL_SYSVAR(signed_longlong_thdvar),
-    nullptr};
-
-// this is an example of SHOW_FUNC
-static int show_func_toydb(MYSQL_THD, SHOW_VAR *var, char *buf) {
-  var->type = SHOW_CHAR;
-  var->value = buf;  // it's of SHOW_VAR_FUNC_BUFF_SIZE bytes
-  snprintf(buf, SHOW_VAR_FUNC_BUFF_SIZE,
-           "enum_var is %lu, ulong_var is %lu, "
-           "double_var is %f, signed_int_var is %d, "
-           "signed_long_var is %ld, signed_longlong_var is %lld",
-           srv_enum_var, srv_ulong_var, srv_double_var, srv_signed_int_var,
-           srv_signed_long_var, srv_signed_longlong_var);
-  return 0;
-}
-
-struct toydb_vars_t {
-  ulong var1;
-  double var2;
-  char var3[64];
-  bool var4;
-  bool var5;
-  ulong var6;
-};
-
-static toydb_vars_t toydb_vars = {100,  20.01, "three hundred",
-                                  true, false, 8250};
-
-static SHOW_VAR show_status_toydb[] = {
-    {"var1", reinterpret_cast<char *>(&toydb_vars.var1), SHOW_LONG,
-     SHOW_SCOPE_GLOBAL},
-    {"var2", reinterpret_cast<char *>(&toydb_vars.var2), SHOW_DOUBLE,
-     SHOW_SCOPE_GLOBAL},
-    {nullptr, nullptr, SHOW_UNDEF,
-     SHOW_SCOPE_UNDEF}  // null terminator required
-};
-
-static SHOW_VAR show_array_toydb[] = {
-    {"array", reinterpret_cast<char *>(show_status_toydb), SHOW_ARRAY,
-     SHOW_SCOPE_GLOBAL},
-    {"var3", reinterpret_cast<char *>(&toydb_vars.var3), SHOW_CHAR,
-     SHOW_SCOPE_GLOBAL},
-    {"var4", reinterpret_cast<char *>(&toydb_vars.var4), SHOW_BOOL,
-     SHOW_SCOPE_GLOBAL},
-    {nullptr, nullptr, SHOW_UNDEF, SHOW_SCOPE_UNDEF}};
-
-static SHOW_VAR func_status[] = {
-    {"toydb_func_toydb", reinterpret_cast<char *>(show_func_toydb), SHOW_FUNC,
-     SHOW_SCOPE_GLOBAL},
-    {"toydb_status_var5", reinterpret_cast<char *>(&toydb_vars.var5), SHOW_BOOL,
-     SHOW_SCOPE_GLOBAL},
-    {"toydb_status_var6", reinterpret_cast<char *>(&toydb_vars.var6), SHOW_LONG,
-     SHOW_SCOPE_GLOBAL},
-    {"toydb_status", reinterpret_cast<char *>(show_array_toydb), SHOW_ARRAY,
-     SHOW_SCOPE_GLOBAL},
-    {nullptr, nullptr, SHOW_UNDEF, SHOW_SCOPE_UNDEF}};
-
 mysql_declare_plugin(toydb){
     MYSQL_STORAGE_ENGINE_PLUGIN,
     &toydb_storage_engine,
@@ -562,8 +577,8 @@ mysql_declare_plugin(toydb){
     nullptr,           /* Plugin check uninstall */
     toydb_deinit_func, /* Plugin Deinit */
     0x0001 /* 0.1 */,
-    func_status,            /* status variables */
-    toydb_system_variables, /* system variables */
-    nullptr,                /* config options */
-    0,                      /* flags */
+    nullptr, /* status variables */
+    nullptr, /* system variables */
+    nullptr, /* config options */
+    0,       /* flags */
 } mysql_declare_plugin_end;

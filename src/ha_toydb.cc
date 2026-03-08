@@ -64,9 +64,14 @@
 static bool check_type_match(enum_field_types expected,
                              const SupportedDBValue &value) {
   switch (expected) {
+    case enum_field_types::MYSQL_TYPE_TINY:
+    case enum_field_types::MYSQL_TYPE_SHORT:
+    case enum_field_types::MYSQL_TYPE_LONG:
     case enum_field_types::MYSQL_TYPE_LONGLONG:
       return std::holds_alternative<int64>(value);
     case enum_field_types::MYSQL_TYPE_VAR_STRING:
+    case enum_field_types::MYSQL_TYPE_VARCHAR:
+    case enum_field_types::MYSQL_TYPE_STRING:
       return std::holds_alternative<std::string>(value);
     default:
       return false;
@@ -74,8 +79,18 @@ static bool check_type_match(enum_field_types expected,
 }
 
 static bool check_supported_type(enum_field_types type) {
-  return type == enum_field_types::MYSQL_TYPE_LONGLONG ||
-         type == enum_field_types::MYSQL_TYPE_VAR_STRING;
+  switch (type) {
+    case enum_field_types::MYSQL_TYPE_TINY:
+    case enum_field_types::MYSQL_TYPE_SHORT:
+    case enum_field_types::MYSQL_TYPE_LONG:
+    case enum_field_types::MYSQL_TYPE_LONGLONG:
+    case enum_field_types::MYSQL_TYPE_VAR_STRING:
+    case enum_field_types::MYSQL_TYPE_VARCHAR:
+    case enum_field_types::MYSQL_TYPE_STRING:
+      return true;
+    default:
+      return false;
+  }
 }
 
 ToydbTable::ToydbTable(std::string name) : table_name(std::move(name)) {}
@@ -610,7 +625,8 @@ int ha_toydb::create(const char *name, TABLE *table_info, HA_CREATE_INFO *,
   for (Field **f = table_info->field; *f != nullptr; f++) {
     DBUG_PRINT("field",
                ("Field: name=%s, type=%d", (*f)->field_name, (*f)->type()));
-    new_table.add_column((*f)->field_name, (*f)->type());
+    int ret = new_table.add_column((*f)->field_name, (*f)->type());
+    if (ret != 0) return ret;
   }
 
   toydb_tables->tables.emplace(table_name, std::move(new_table));

@@ -66,8 +66,6 @@ docker run -d --name mysql-toydb \
 ### Sample SQL
 
 ```sql
-INSTALL PLUGIN toydb SONAME "ha_toydb.so";
-
 CREATE DATABASE toydb;
 use toydb;
 

@@ -66,9 +66,12 @@ docker run -d --name mysql-toydb \
 ### Sample SQL
 
 ```sql
-CREATE DATABASE test;
+INSTALL PLUGIN toydb SONAME "ha_toydb.so";
 
-CREATE TABLE test.t1 (id INT) ENGINE=TOYDB;
-INSERT INTO test.t1 VALUES (1);
-SELECT * FROM test.t1;
+CREATE DATABASE toydb;
+use toydb;
+
+CREATE TABLE t1 (id INT) ENGINE=TOYDB;
+INSERT INTO t1 VALUES (1);
+SELECT * FROM t1;
 ```

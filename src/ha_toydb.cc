@@ -267,12 +267,21 @@ int ha_toydb::write_row(uchar *) {
     return HA_ERR_INTERNAL_ERROR;
   }
 
+  // handler::table::fieldからデータの読み取り（val_int()/val_str()）を呼ぶ前にread_setをセットする必要がある
+  // read_setはビットマップで、どのフィールドを読み取るかを指定するためのもの
+  // ただ今回は固定で全てのフィールドの読み書きを行うことにするので、全てのビットを立てる
+  // dbug_tmp_use_all_columnsはデバッグビルドでのみ有効で、元のビットマップを保存して復元できる
+  my_bitmap_map *old_map =
+      dbug_tmp_use_all_columns(this->table, this->table->read_set);
+
   std::vector<SupportedDBValue> row_data;
+  int ret = 0;
 
   for (Field **field = this->table->field; *field != nullptr; field++) {
     if ((*field)->is_null()) {
       my_error(ER_BAD_NULL_ERROR, MYF(0), (*field)->field_name);
-      return ER_BAD_NULL_ERROR;
+      ret = ER_BAD_NULL_ERROR;
+      break;
     }
 
     switch ((*field)->type()) {
@@ -295,11 +304,18 @@ int ha_toydb::write_row(uchar *) {
       }
       default:
         DBUG_PRINT("error", ("Unsupported field type: %d", (*field)->type()));
-        return HA_ERR_UNSUPPORTED;
+        ret = HA_ERR_UNSUPPORTED;
+        break;
     }
+    if (ret != 0) break;
   }
 
-  return toydb_table->second.insert_row(std::move(row_data));
+  if (ret == 0) {
+    ret = toydb_table->second.insert_row(std::move(row_data));
+  }
+
+  dbug_tmp_restore_column_map(this->table->read_set, old_map);
+  return ret;
 }
 
 /**
@@ -315,12 +331,17 @@ int ha_toydb::update_row(const uchar *, uchar *) {
     return HA_ERR_INTERNAL_ERROR;
   }
 
+  my_bitmap_map *old_map =
+      dbug_tmp_use_all_columns(this->table, this->table->read_set);
+
   std::vector<SupportedDBValue> row_data;
+  int ret = 0;
 
   for (Field **field = this->table->field; *field != nullptr; field++) {
     if ((*field)->is_null()) {
       my_error(ER_BAD_NULL_ERROR, MYF(0), (*field)->field_name);
-      return ER_BAD_NULL_ERROR;
+      ret = ER_BAD_NULL_ERROR;
+      break;
     }
 
     switch ((*field)->type()) {
@@ -338,13 +359,20 @@ int ha_toydb::update_row(const uchar *, uchar *) {
         break;
       }
       default:
-        return HA_ERR_UNSUPPORTED;
+        ret = HA_ERR_UNSUPPORTED;
+        break;
     }
+    if (ret != 0) break;
   }
 
   // 実際に更新する行は直前にrnd_nextで返した行なので、`scan_index-1`の行を更新する
-  return toydb_table->second.update_row(this->scan_index - 1,
-                                        std::move(row_data));
+  if (ret == 0) {
+    ret = toydb_table->second.update_row(this->scan_index - 1,
+                                         std::move(row_data));
+  }
+
+  dbug_tmp_restore_column_map(this->table->read_set, old_map);
+  return ret;
 }
 
 /**
@@ -403,6 +431,11 @@ int ha_toydb::index_last(uchar *) {
  */
 static int store_row_to_buf(TABLE *table, uchar *buf,
                             const std::vector<SupportedDBValue> &row) {
+  // field->store()内でASSERT_COLUMN_MARKED_FOR_WRITEが呼ばれるため、
+  // write_setに全カラムのビットを立てる必要がある
+  my_bitmap_map *old_map =
+      dbug_tmp_use_all_columns(table, table->write_set);
+
   memset(buf, 0, table->s->null_bytes);
 
   for (size_t i = 0; i < row.size(); i++) {
@@ -419,6 +452,8 @@ static int store_row_to_buf(TABLE *table, uchar *buf,
         },
         row[i]);
   }
+
+  dbug_tmp_restore_column_map(table->write_set, old_map);
   return 0;
 }
 
@@ -564,11 +599,13 @@ int ha_toydb::create(const char *name, TABLE *table_info, HA_CREATE_INFO *,
                      dd::Table *) {
   DBUG_TRACE;
 
-  if (toydb_tables->tables.contains(name)) {
+  const char *table_name = table_info->s->table_name.str;
+
+  if (toydb_tables->tables.contains(table_name)) {
     return HA_ERR_TABLE_EXIST;
   }
 
-  ToydbTable new_table(name);
+  ToydbTable new_table(table_name);
 
   for (Field **f = table_info->field; *f != nullptr; f++) {
     DBUG_PRINT("field",
@@ -576,7 +613,7 @@ int ha_toydb::create(const char *name, TABLE *table_info, HA_CREATE_INFO *,
     new_table.add_column((*f)->field_name, (*f)->type());
   }
 
-  toydb_tables->tables.emplace(name, std::move(new_table));
+  toydb_tables->tables.emplace(table_name, std::move(new_table));
 
   return 0;
 }

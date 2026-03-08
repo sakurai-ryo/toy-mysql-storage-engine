@@ -48,12 +48,14 @@ echo "Execute 'INSTALL PLUGIN toydb SONAME "ha_toydb.so";' to install the storag
 dir = "mysql-server"
 # https://dev.mysql.com/doc/refman/8.4/en/data-directory-initialization.html
 run = """
+rm -rf run/data
 mkdir -p run/data
 
 cat <<EOF > run/my.cnf
 [mysqld]
 basedir=${PWD}/build
 datadir=${PWD}/run/data
+disable_log_bin
 EOF
 
 build/bin/mysqld --defaults-file=run/my.cnf --initialize
@@ -63,7 +65,7 @@ build/bin/mysqld --defaults-file=run/my.cnf --initialize
 dir = "mysql-server"
 # https://dev.mysql.com/doc/refman/8.4/en/starting-server.html
 run = """
-build/bin/mysqld --defaults-file=run/my.cnf --debug 
+build/bin/mysqld --defaults-file=run/my.cnf --debug=d
 """
 
 [tasks."mysql:stop"]

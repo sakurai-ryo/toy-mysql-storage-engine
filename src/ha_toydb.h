@@ -105,20 +105,42 @@ class ToydbTable final {
 
   ToydbRowId next_row_id{1};
 
+  // PRIMARY KEYを構成するカラムのインデックス番号
+  // DDLでのカラムの定義順でインデックス番号が決まる
+  std::vector<uint> pk_column_indices;
+
   std::map<ToydbIndexKey, ToydbRow, ToydbKeyLess> rows;
 
  public:
+  using RowIterator =
+      std::map<ToydbIndexKey, ToydbRow, ToydbKeyLess>::const_iterator;
+  using RowMutableIterator =
+      std::map<ToydbIndexKey, ToydbRow, ToydbKeyLess>::iterator;
+
   explicit ToydbTable(std::string name);
+
+  void set_primary_key(std::vector<uint> indices);
+  ToydbIndexKey build_key_from_row(
+      const std::vector<SupportedDBValue> &row) const;
 
   int add_column(const std::string &name, enum_field_types type);
   int insert_row(std::vector<SupportedDBValue> row_data);
   int update_row(size_t row_index, std::vector<SupportedDBValue> row_data);
   int delete_row(size_t row_index);
+  int update_row_by_key(const ToydbIndexKey &key,
+                        std::vector<SupportedDBValue> row_data);
+  int delete_row_by_key(const ToydbIndexKey &key);
   size_t row_count() const;
   const std::vector<SupportedDBValue> &get_row(size_t row_index) const;
   const std::vector<ToydbColumn> &get_columns() const;
   void clear_rows();
   void print_all() const;
+
+  RowIterator rows_begin() const;
+  RowIterator rows_end() const;
+  RowIterator find_row(const ToydbIndexKey &key) const;
+  RowIterator lower_bound_row(const ToydbIndexKey &key) const;
+  RowIterator upper_bound_row(const ToydbIndexKey &key) const;
 };
 
 /**
@@ -148,6 +170,7 @@ class Toydb_share final : public Handler_share {
 };
 
 struct ToydbCursor {
+  // 有効な行を指しているかのフラグ
   bool positioned{false};
   // テーブルスキャン時の現在の行位置
   size_t current_pos{0};
@@ -208,10 +231,19 @@ class ha_toydb : public handler {
     return HA_MAX_REC_LENGTH;
   }
 
+  /**
+   * @brief サポートするインデックスの最大数
+   */
   uint max_supported_keys() const override { return MAX_KEY; }
 
+  /**
+   * @brief 1インデックスあたりの最大カラム数
+   */
   uint max_supported_key_parts() const override { return MAX_REF_PARTS; }
 
+  /**
+   * @brief サポートするインデックスの最大長
+   */
   uint max_supported_key_length() const override { return MAX_KEY_LENGTH; }
 
   double scan_time() override {
@@ -232,6 +264,9 @@ class ha_toydb : public handler {
   int update_row(const uchar *old_data, uchar *new_data) override;
 
   int delete_row(const uchar *buf) override;
+
+  int index_init(uint idx, bool sorted) override;
+  int index_end() override;
 
   int index_read(uchar *buf, const uchar *key, uint key_len,
                  enum ha_rkey_function find_flag) override;
@@ -268,6 +303,7 @@ class ha_toydb : public handler {
 
  private:
   int read_row_from_fields(std::vector<SupportedDBValue> &row_data);
+  int decode_index_key(const uchar *key, uint key_len, ToydbIndexKey &out_key);
 
   // Handler_shareのロックをRAIIで管理する
   // 内部ではmysql_mutex_lock,mysql_mutex_unlockを利用していてstd::lock_guardを使えないのでラッパーを作った

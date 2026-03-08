@@ -25,18 +25,29 @@
 #include "ha_toydb.h"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include <fcntl.h>
 #include <sys/types.h>
 
+#include "field_types.h"
 #include "my_base.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
+#include "my_sys.h"
+#include "mysql/components/services/bits/system_variables_bits.h"
+#include "mysql/plugin.h"
 #include "mysql/service_thd_alloc.h"
 #include "mysql/status_var.h"
+#include "mysqld_error.h"
 #include "sql/derror.h"
 #include "sql/field.h"
 #include "sql/handler.h"
@@ -81,7 +92,7 @@ int ToydbTable::add_column(const std::string &name, enum_field_types type) {
   return 0;
 }
 
-int ToydbTable::insert_row(const std::vector<SupportedDBValue> row_data) {
+int ToydbTable::insert_row(const std::vector<SupportedDBValue> &row_data) {
   if (row_data.size() != this->columns.size()) {
     return ER_WRONG_VALUE_COUNT;
   }
@@ -241,7 +252,7 @@ int ha_toydb::close(void) {
 /**
  * @brief テーブルへの行の挿入
  */
-int ha_toydb::write_row(uchar *buf) {
+int ha_toydb::write_row(uchar *) {
   DBUG_TRACE;
 
   auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);

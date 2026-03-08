@@ -68,7 +68,7 @@ class ToydbTable final {
   explicit ToydbTable(std::string name);
 
   int add_column(const std::string &name, enum_field_types type);
-  int insert_row(const std::vector<SupportedDBValue> row_data);
+  int insert_row(std::vector<SupportedDBValue> row_data);
   int update_row(size_t row_index, std::vector<SupportedDBValue> row_data);
   int delete_row(size_t row_index);
   size_t row_count() const;

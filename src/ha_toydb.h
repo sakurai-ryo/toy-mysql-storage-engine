@@ -37,6 +37,12 @@
 #include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
 
 /**
+ * TODO: example実装のコメント修正
+ *
+ * あとでコメントも英語にする
+ */
+
+/**
  * @brief サポートするデータ型
  *
  * Nullableは一旦サポート外

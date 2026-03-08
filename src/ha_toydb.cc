@@ -44,7 +44,6 @@
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include "my_sys.h"
-#include "mysql/components/services/bits/system_variables_bits.h"
 #include "mysql/plugin.h"
 #include "mysql/service_thd_alloc.h"
 #include "mysql/status_var.h"
@@ -60,6 +59,12 @@
 #include "sql/table.h"
 #include "thr_lock.h"
 #include "typelib.h"
+
+/**
+ * TODO: example実装のコメント修正
+ *
+ * あとでコメントも英語にする
+ */
 
 static bool check_type_match(enum_field_types expected,
                              const SupportedDBValue &value) {
@@ -564,13 +569,23 @@ int ha_toydb::delete_all_rows() {
   return 0;
 }
 
+/**
+ * @brief
+ * SQLステートメント開始時と終了時に行うべきSE内部リソースのロックとアンロックを行う
+ *
+ * 今回はデータは全てインメモリなので特になし
+ */
 int ha_toydb::external_lock(THD *, int) {
   DBUG_TRACE;
   return 0;
 }
 
+/**
+ * @brief SQLステートメント開始前に必要なロック情報をMySQLに提供する
+ */
 THR_LOCK_DATA **ha_toydb::store_lock(THD *, THR_LOCK_DATA **to,
                                      enum thr_lock_type lock_type) {
+  // 今回は特にロックは実装しないが、ロックの種類が指定された場合はlock構造体のtypeにセットしてMySQLに返す
   if (lock_type != TL_IGNORE && this->lock.type == TL_UNLOCK)
     this->lock.type = lock_type;
   *to++ = &this->lock;

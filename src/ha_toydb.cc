@@ -209,6 +209,7 @@ static int toydb_init_func(void *p) {
   toydb_hton = static_cast<handlerton *>(p);
   toydb_hton->create = toydb_create_handler;
   toydb_hton->state = SHOW_OPTION_YES;
+  // Truncate時はhandler::truncateではなく、delete_table=>createの流れにするためにテーブルの再作成を許可する
   toydb_hton->flags = HTON_CAN_RECREATE;
   // システムテーブルのサポートはしないので常にfalseを返す
   toydb_hton->is_supported_system_table = [](const char *, const char *,
@@ -280,8 +281,21 @@ int ha_toydb::open(const char *, int, uint, const dd::Table *) {
   return 0;
 }
 
+/**
+ * @brief 処理終了時にテーブルを閉じる
+ *
+ * テーブル削除前に該当テーブルを開いているhandlerがある場合はこのcloseが呼ばれるケースもある
+ *
+ * 上記は`handler::delete_table`のコメントに記載している
+ */
 int ha_toydb::close(void) {
   DBUG_TRACE;
+
+  // テーブル削除前に該当テーブルのhandlerは全てcloseされるので、複数handlerがいても安全
+  if (this->share != nullptr) {
+    this->share->toydb_table = nullptr;
+  }
+
   return 0;
 }
 
@@ -567,8 +581,21 @@ THR_LOCK_DATA **ha_toydb::store_lock(THD *, THR_LOCK_DATA **to,
   return to;
 }
 
-int ha_toydb::delete_table(const char *, const dd::Table *) {
+/**
+ * @brief テーブルの削除
+ *
+ * テーブル削除前にcloseされる可能性もあるので、Toydb_shareには依存しないようにする
+ */
+int ha_toydb::delete_table(const char *name, const dd::Table *) {
   DBUG_TRACE;
+
+  // nameはパス形式（例:"./db/table"）なので、最後の'/'以降をテーブル名として取得する
+  std::string_view path(name);
+  auto pos = path.find_last_of('/');
+  std::string_view table_name =
+      (pos != std::string_view::npos) ? path.substr(pos + 1) : path;
+
+  toydb_tables->tables.erase(std::string(table_name));
   return 0;
 }
 
@@ -599,8 +626,10 @@ int ha_toydb::create(const char *, TABLE *table_info, HA_CREATE_INFO *,
 
   const char *table_name = table_info->s->table_name.str;
 
+  // HTON_CAN_RECREATEにより、TRUNCATE時はdelete_tableを経由せず直接create()が呼ばれる
+  // なのでその場合は既存テーブルを削除して再作成する
   if (toydb_tables->tables.contains(table_name)) {
-    return HA_ERR_TABLE_EXIST;
+    toydb_tables->tables.erase(table_name);
   }
 
   ToydbTable new_table(table_name);

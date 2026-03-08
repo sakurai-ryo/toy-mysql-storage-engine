@@ -194,8 +194,7 @@ static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table,
 
 static handlerton *toydb_hton;
 
-Toydb_share::Toydb_share()
-    : data_mutex(std::make_unique<std::mutex>()) {
+Toydb_share::Toydb_share() : data_mutex(std::make_unique<std::mutex>()) {
   thr_lock_init(&this->lock);
 }
 
@@ -247,6 +246,14 @@ Toydb_share *ha_toydb::get_share() {
     this->set_ha_share_ptr(static_cast<Handler_share *>(tmp_share));
   }
 
+  // テーブルデータへのポインタをキャッシュする
+  if (tmp_share->toydb_table == nullptr) {
+    auto it = toydb_tables->tables.find(this->table->s->table_name.str);
+    if (it != toydb_tables->tables.end()) {
+      tmp_share->toydb_table = &it->second;
+    }
+  }
+
   return tmp_share;
 }
 
@@ -267,6 +274,7 @@ int ha_toydb::open(const char *, int, uint, const dd::Table *) {
 
   this->share = this->get_share();
   if (this->share == nullptr) return HA_ERR_INTERNAL_ERROR;
+  if (this->share->toydb_table == nullptr) return HA_ERR_INTERNAL_ERROR;
   thr_lock_data_init(&this->share->lock, &this->lock, nullptr);
 
   return 0;
@@ -285,12 +293,7 @@ int ha_toydb::write_row(uchar *) {
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
-  if (toydb_table == toydb_tables->tables.end()) {
-    DBUG_PRINT("error",
-               ("Table '%s' not found", this->table->s->table_name.str));
-    return HA_ERR_INTERNAL_ERROR;
-  }
+  auto *toydb_table = this->share->toydb_table;
 
   // handler::table::fieldからデータの読み取り（val_int()/val_str()）を呼ぶ前にread_setをセットする必要がある
   // read_setはビットマップで、どのフィールドを読み取るかを指定するためのもの
@@ -336,7 +339,7 @@ int ha_toydb::write_row(uchar *) {
   }
 
   if (ret == 0) {
-    ret = toydb_table->second.insert_row(std::move(row_data));
+    ret = toydb_table->insert_row(std::move(row_data));
   }
 
   dbug_tmp_restore_column_map(this->table->read_set, old_map);
@@ -353,10 +356,7 @@ int ha_toydb::update_row(const uchar *, uchar *) {
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
-  if (toydb_table == toydb_tables->tables.end()) {
-    return HA_ERR_INTERNAL_ERROR;
-  }
+  auto *toydb_table = this->share->toydb_table;
 
   my_bitmap_map *old_map =
       dbug_tmp_use_all_columns(this->table, this->table->read_set);
@@ -394,8 +394,7 @@ int ha_toydb::update_row(const uchar *, uchar *) {
 
   // 実際に更新する行は直前にrnd_nextで返した行なので、`scan_index-1`の行を更新する
   if (ret == 0) {
-    ret = toydb_table->second.update_row(this->scan_index - 1,
-                                         std::move(row_data));
+    ret = toydb_table->update_row(this->scan_index - 1, std::move(row_data));
   }
 
   dbug_tmp_restore_column_map(this->table->read_set, old_map);
@@ -410,13 +409,8 @@ int ha_toydb::delete_row(const uchar *) {
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
-  if (toydb_table == toydb_tables->tables.end()) {
-    return HA_ERR_INTERNAL_ERROR;
-  }
-
   // update_rowと同様に、削除する行は直前にrnd_nextで返した行なので、`scan_index-1`の行を削除する
-  return toydb_table->second.delete_row(this->scan_index - 1);
+  return this->share->toydb_table->delete_row(this->scan_index - 1);
 }
 
 int ha_toydb::index_read_map(uchar *, const uchar *, key_part_map,
@@ -507,15 +501,13 @@ int ha_toydb::rnd_next(uchar *buf) {
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
-  if (toydb_table == toydb_tables->tables.end()) return HA_ERR_INTERNAL_ERROR;
+  auto *toydb_table = this->share->toydb_table;
 
-  if (this->scan_index >= toydb_table->second.row_count())
-    return HA_ERR_END_OF_FILE;
+  if (this->scan_index >= toydb_table->row_count()) return HA_ERR_END_OF_FILE;
 
   ha_statistic_increment(&System_status_var::ha_read_rnd_next_count);
 
-  const auto &row = toydb_table->second.get_row(this->scan_index);
+  const auto &row = toydb_table->get_row(this->scan_index);
   this->scan_index++;
   return store_row_to_buf(this->table, buf, row);
 }
@@ -538,13 +530,12 @@ int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
   // refから行位置を復元する
   size_t row_index = my_get_ptr(pos, this->ref_length);
 
-  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
-  if (toydb_table == toydb_tables->tables.end()) return HA_ERR_INTERNAL_ERROR;
+  auto *toydb_table = this->share->toydb_table;
 
-  if (row_index >= toydb_table->second.row_count()) return HA_ERR_KEY_NOT_FOUND;
+  if (row_index >= toydb_table->row_count()) return HA_ERR_KEY_NOT_FOUND;
 
   this->scan_index = row_index;
-  const auto &row = toydb_table->second.get_row(row_index);
+  const auto &row = toydb_table->get_row(row_index);
   return store_row_to_buf(this->table, buf, row);
 }
 
@@ -556,11 +547,8 @@ int ha_toydb::info(uint) {
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
-  if (toydb_table != toydb_tables->tables.end()) {
-    // 一旦行数だけ追加する
-    this->stats.records = toydb_table->second.row_count();
-  }
+  // 一旦行数だけ追加する
+  this->stats.records = this->share->toydb_table->row_count();
   return 0;
 }
 
@@ -579,10 +567,7 @@ int ha_toydb::delete_all_rows() {
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  auto toydb_table = toydb_tables->tables.find(this->table->s->table_name.str);
-  if (toydb_table == toydb_tables->tables.end()) return HA_ERR_INTERNAL_ERROR;
-
-  toydb_table->second.clear_rows();
+  this->share->toydb_table->clear_rows();
   return 0;
 }
 

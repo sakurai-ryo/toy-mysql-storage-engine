@@ -100,6 +100,10 @@ class Toydb_share final : public Handler_share {
   // 現状だと、write_rowなどの際にまるっとロックを取ってるので細かい粒度のロックに書き換えたい
   std::unique_ptr<std::mutex> data_mutex;
 
+  // open()時に検索したToydbTableへのポインタをキャッシュする
+  // ToydbTableはToydb_shareより長い寿命なので一旦生ポインタで管理する
+  ToydbTable *toydb_table{nullptr};
+
   Toydb_share();
   ~Toydb_share() override { thr_lock_delete(&lock); }
 };

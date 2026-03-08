@@ -58,7 +58,11 @@ datadir=${PWD}/run/data
 disable_log_bin
 EOF
 
-build/bin/mysqld --defaults-file=run/my.cnf --initialize
+cat <<EOF > run/init.sql
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'root';
+EOF
+
+build/bin/mysqld --defaults-file=run/my.cnf --initialize-insecure --init-file=${PWD}/run/init.sql
 """
 
 [tasks."mysql:run"]

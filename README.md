@@ -62,3 +62,13 @@ docker run -d --name mysql-toydb \
   -p 3306:3306 \
   mysql-toydb-engine
 ```
+
+### Sample SQL
+
+```sql
+CREATE DATABASE test;
+
+CREATE TABLE test.t1 (id INT) ENGINE=TOYDB;
+INSERT INTO test.t1 VALUES (1);
+SELECT * FROM test.t1;
+```

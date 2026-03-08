@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -166,7 +167,7 @@ void ToydbTable::print_all() const {
 
 // --- Storage Engine ---
 
-static ToydbTables *toydb_tables;
+static std::unique_ptr<ToydbTables> toydb_tables;
 
 static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table,
                                      bool partitioned, MEM_ROOT *mem_root);
@@ -180,6 +181,8 @@ Toydb_share::Toydb_share() { thr_lock_init(&this->lock); }
  */
 static int toydb_init_func(void *p) {
   DBUG_TRACE;
+
+  toydb_tables = std::make_unique<ToydbTables>();
 
   toydb_hton = static_cast<handlerton *>(p);
   toydb_hton->create = toydb_create_handler;
@@ -201,6 +204,8 @@ static int toydb_deinit_func(void *p [[maybe_unused]]) {
   DBUG_TRACE;
 
   assert(p);
+
+  toydb_tables.reset();
 
   return 0;
 }

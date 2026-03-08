@@ -63,7 +63,7 @@ build/bin/mysqld --defaults-file=run/my.cnf --initialize
 dir = "mysql-server"
 # https://dev.mysql.com/doc/refman/8.4/en/starting-server.html
 run = """
-build/bin/mysqld --defaults-file=run/my.cnf
+build/bin/mysqld --defaults-file=run/my.cnf --debug 
 """
 
 [tasks."mysql:stop"]

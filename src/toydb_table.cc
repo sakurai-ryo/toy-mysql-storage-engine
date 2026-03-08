@@ -31,7 +31,9 @@
 #include <variant>
 #include <vector>
 
+#include "field_types.h"
 #include "my_base.h"
+#include "my_inttypes.h"
 #include "mysqld_error.h"
 
 static bool check_type_match(enum_field_types expected,

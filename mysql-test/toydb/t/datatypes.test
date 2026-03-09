@@ -1,0 +1,59 @@
+# Data type support tests for TOYDB storage engine
+
+--disable_warnings
+DROP TABLE IF EXISTS t_int, t_str, t_mixed;
+--enable_warnings
+
+# Integer types (all stored as int64 internally)
+CREATE TABLE t_int (
+  a TINYINT NOT NULL,
+  b SMALLINT NOT NULL,
+  c INT NOT NULL,
+  d BIGINT NOT NULL,
+  PRIMARY KEY (c)
+) ENGINE=TOYDB;
+
+INSERT INTO t_int VALUES (127, 32767, 1, 9223372036854775807);
+INSERT INTO t_int VALUES (-128, -32768, 2, -9223372036854775808);
+INSERT INTO t_int VALUES (0, 0, 3, 0);
+
+SELECT * FROM t_int ORDER BY c;
+
+DROP TABLE t_int;
+
+# String types
+CREATE TABLE t_str (
+  id INT NOT NULL,
+  a VARCHAR(100) NOT NULL,
+  b CHAR(20) NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=TOYDB;
+
+INSERT INTO t_str VALUES (1, 'hello world', 'fixed');
+INSERT INTO t_str VALUES (2, '', '');
+INSERT INTO t_str VALUES (3, 'special chars: !@#$%', 'test');
+
+SELECT * FROM t_str ORDER BY id;
+
+# String comparison in WHERE
+SELECT * FROM t_str WHERE a = 'hello world';
+
+DROP TABLE t_str;
+
+# Mixed types
+CREATE TABLE t_mixed (
+  id BIGINT NOT NULL,
+  name VARCHAR(50) NOT NULL,
+  age INT NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=TOYDB;
+
+INSERT INTO t_mixed VALUES (1, 'Alice', 30);
+INSERT INTO t_mixed VALUES (2, 'Bob', 25);
+INSERT INTO t_mixed VALUES (3, 'Charlie', 35);
+
+SELECT * FROM t_mixed ORDER BY id;
+SELECT * FROM t_mixed WHERE age > 28 ORDER BY id;
+SELECT name, age FROM t_mixed ORDER BY id;
+
+DROP TABLE t_mixed;

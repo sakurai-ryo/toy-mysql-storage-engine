@@ -1,0 +1,86 @@
+# Primary key and index operations for TOYDB storage engine
+
+--disable_warnings
+DROP TABLE IF EXISTS t1, t2;
+--enable_warnings
+
+# Table with PRIMARY KEY (Clustered Index)
+CREATE TABLE t1 (
+  id INT NOT NULL,
+  val VARCHAR(50) NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=TOYDB;
+
+INSERT INTO t1 VALUES (5, 'five');
+INSERT INTO t1 VALUES (1, 'one');
+INSERT INTO t1 VALUES (3, 'three');
+INSERT INTO t1 VALUES (7, 'seven');
+INSERT INTO t1 VALUES (2, 'two');
+
+# Clustered Index should maintain order
+SELECT * FROM t1 ORDER BY id;
+
+# Exact key lookup (HA_READ_KEY_EXACT)
+SELECT * FROM t1 WHERE id = 3;
+
+# Key not found
+SELECT * FROM t1 WHERE id = 99;
+
+# Range scan - greater than (HA_READ_AFTER_KEY)
+SELECT * FROM t1 WHERE id > 3 ORDER BY id;
+
+# Range scan - greater than or equal (HA_READ_KEY_OR_NEXT)
+SELECT * FROM t1 WHERE id >= 3 ORDER BY id;
+
+# Range scan - less than (HA_READ_BEFORE_KEY)
+SELECT * FROM t1 WHERE id < 3 ORDER BY id;
+
+# Range scan - less than or equal (HA_READ_KEY_OR_PREV)
+SELECT * FROM t1 WHERE id <= 3 ORDER BY id;
+
+# Range scan - BETWEEN
+SELECT * FROM t1 WHERE id BETWEEN 2 AND 5 ORDER BY id;
+
+# Reverse order scan
+SELECT * FROM t1 ORDER BY id DESC;
+
+# Duplicate key error
+--error ER_DUP_ENTRY
+INSERT INTO t1 VALUES (1, 'duplicate');
+
+# UPDATE via index scan
+UPDATE t1 SET val = 'ONE' WHERE id = 1;
+SELECT * FROM t1 WHERE id = 1;
+
+# UPDATE primary key value
+UPDATE t1 SET id = 10 WHERE id = 7;
+SELECT * FROM t1 ORDER BY id;
+
+# DELETE via index scan
+DELETE FROM t1 WHERE id = 3;
+SELECT * FROM t1 ORDER BY id;
+
+# MIN/MAX using index
+SELECT MIN(id) FROM t1;
+SELECT MAX(id) FROM t1;
+
+# COUNT
+SELECT COUNT(*) FROM t1;
+
+DROP TABLE t1;
+
+# Table without PRIMARY KEY (uses internal row_id)
+CREATE TABLE t2 (
+  a INT NOT NULL,
+  b VARCHAR(30) NOT NULL
+) ENGINE=TOYDB;
+
+INSERT INTO t2 VALUES (1, 'x');
+INSERT INTO t2 VALUES (2, 'y');
+INSERT INTO t2 VALUES (1, 'z');
+
+# Duplicate values allowed without PK
+SELECT * FROM t2;
+SELECT COUNT(*) FROM t2;
+
+DROP TABLE t2;

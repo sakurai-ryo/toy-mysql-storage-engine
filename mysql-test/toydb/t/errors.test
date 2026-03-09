@@ -1,0 +1,46 @@
+# Error handling tests for TOYDB storage engine
+
+--disable_warnings
+DROP TABLE IF EXISTS t1;
+--enable_warnings
+
+CREATE TABLE t1 (
+  id INT NOT NULL,
+  name VARCHAR(50) NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=TOYDB;
+
+# NULL value should be rejected (TOYDB does not support NULL)
+--error ER_BAD_NULL_ERROR
+INSERT INTO t1 VALUES (NULL, 'test');
+
+--error ER_BAD_NULL_ERROR
+INSERT INTO t1 VALUES (1, NULL);
+
+# RENAME TABLE is not supported
+INSERT INTO t1 VALUES (1, 'test');
+--error ER_NOT_SUPPORTED_YET
+RENAME TABLE t1 TO t2;
+
+# Verify original table still works after failed rename
+SELECT * FROM t1;
+
+DROP TABLE t1;
+
+# SELECT from non-existent table
+--error ER_NO_SUCH_TABLE
+SELECT * FROM nonexistent_toydb_table;
+
+# Empty table operations
+CREATE TABLE t1 (
+  id INT NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=TOYDB;
+
+SELECT * FROM t1;
+SELECT COUNT(*) FROM t1;
+DELETE FROM t1;
+TRUNCATE TABLE t1;
+SELECT * FROM t1;
+
+DROP TABLE t1;

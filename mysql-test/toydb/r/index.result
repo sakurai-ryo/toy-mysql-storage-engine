@@ -1,0 +1,100 @@
+DROP TABLE IF EXISTS t1, t2;
+CREATE TABLE t1 (
+id INT NOT NULL,
+val VARCHAR(50) NOT NULL,
+PRIMARY KEY (id)
+) ENGINE=TOYDB;
+INSERT INTO t1 VALUES (5, 'five');
+INSERT INTO t1 VALUES (1, 'one');
+INSERT INTO t1 VALUES (3, 'three');
+INSERT INTO t1 VALUES (7, 'seven');
+INSERT INTO t1 VALUES (2, 'two');
+SELECT * FROM t1 ORDER BY id;
+id	val
+1	one
+2	two
+3	three
+5	five
+7	seven
+SELECT * FROM t1 WHERE id = 3;
+id	val
+3	three
+SELECT * FROM t1 WHERE id = 99;
+id	val
+SELECT * FROM t1 WHERE id > 3 ORDER BY id;
+id	val
+5	five
+7	seven
+SELECT * FROM t1 WHERE id >= 3 ORDER BY id;
+id	val
+3	three
+5	five
+7	seven
+SELECT * FROM t1 WHERE id < 3 ORDER BY id;
+id	val
+1	one
+2	two
+SELECT * FROM t1 WHERE id <= 3 ORDER BY id;
+id	val
+1	one
+2	two
+3	three
+SELECT * FROM t1 WHERE id BETWEEN 2 AND 5 ORDER BY id;
+id	val
+2	two
+3	three
+5	five
+SELECT * FROM t1 ORDER BY id DESC;
+id	val
+7	seven
+5	five
+3	three
+2	two
+1	one
+INSERT INTO t1 VALUES (1, 'duplicate');
+ERROR 23000: Duplicate entry '1' for key 't1.PRIMARY'
+UPDATE t1 SET val = 'ONE' WHERE id = 1;
+SELECT * FROM t1 WHERE id = 1;
+id	val
+1	ONE
+UPDATE t1 SET id = 10 WHERE id = 7;
+SELECT * FROM t1 ORDER BY id;
+id	val
+1	ONE
+2	two
+3	three
+5	five
+10	seven
+DELETE FROM t1 WHERE id = 3;
+SELECT * FROM t1 ORDER BY id;
+id	val
+1	ONE
+2	two
+5	five
+10	seven
+SELECT MIN(id) FROM t1;
+MIN(id)
+1
+SELECT MAX(id) FROM t1;
+MAX(id)
+10
+SELECT COUNT(*) FROM t1;
+COUNT(*)
+4
+DROP TABLE t1;
+CREATE TABLE t2 (
+a INT NOT NULL,
+b VARCHAR(30) NOT NULL
+) ENGINE=TOYDB;
+INSERT INTO t2 VALUES (1, 'x');
+INSERT INTO t2 VALUES (2, 'y');
+INSERT INTO t2 VALUES (1, 'z');
+SELECT * FROM t2;
+a	b
+1	x
+2	y
+1	z
+SELECT COUNT(*) FROM t2;
+COUNT(*)
+3
+DROP TABLE t2;

@@ -1,0 +1,52 @@
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (id INT NOT NULL, name VARCHAR(50) NOT NULL) ENGINE=TOYDB;
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` int NOT NULL,
+  `name` varchar(50) NOT NULL
+) ENGINE=TOYDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+INSERT INTO t1 VALUES (1, 'Alice');
+INSERT INTO t1 VALUES (2, 'Bob');
+INSERT INTO t1 VALUES (3, 'Charlie');
+SELECT * FROM t1;
+id	name
+1	Alice
+2	Bob
+3	Charlie
+UPDATE t1 SET name = 'Alice_updated' WHERE id = 1;
+SELECT * FROM t1;
+id	name
+1	Alice_updated
+2	Bob
+3	Charlie
+DELETE FROM t1 WHERE id = 2;
+SELECT * FROM t1;
+id	name
+1	Alice_updated
+3	Charlie
+DELETE FROM t1;
+SELECT * FROM t1;
+id	name
+INSERT INTO t1 VALUES (10, 'Dave');
+INSERT INTO t1 VALUES (20, 'Eve');
+SELECT * FROM t1;
+id	name
+10	Dave
+20	Eve
+TRUNCATE TABLE t1;
+SELECT * FROM t1;
+id	name
+INSERT INTO t1 VALUES (100, 'Frank');
+SELECT * FROM t1;
+id	name
+100	Frank
+INSERT INTO t1 VALUES (200, 'Grace');
+UPDATE t1 SET id = 101, name = 'Frank_v2' WHERE id = 100;
+SELECT * FROM t1;
+id	name
+101	Frank_v2
+200	Grace
+DROP TABLE t1;
+SELECT * FROM t1;
+ERROR 42S02: Table 'test.t1' doesn't exist

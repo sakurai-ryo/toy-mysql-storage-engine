@@ -79,6 +79,13 @@ run = """
 build/bin/mysqladmin -u root -p shutdown
 """
 
+[tasks."mysql:e2e"]
+dir = "mysql-server"
+run = """
+ln -sfn ../../../../mysql-test/toydb mysql-server/mysql-test/suite/toydb
+./mysql-test/mysql-test-run.pl --suite=toydb --record
+"""
+
 [tasks.fmt]
 run = """
 find src .vscode -name "*.cc" -o -name "*.h" \

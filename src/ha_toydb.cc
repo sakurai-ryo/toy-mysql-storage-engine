@@ -59,41 +59,41 @@
 #include "thr_lock.h"
 #include "typelib.h"
 
+// TODO: 再起動時にInternalエラーになるので修正する
+
 static std::unique_ptr<ToydbTables> toydb_tables;
 
-static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table,
-                                     bool partitioned, MEM_ROOT *mem_root);
-
-static handlerton *toydb_hton;
+static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table, bool,
+                                     MEM_ROOT *mem_root) {
+  return new (mem_root) ha_toydb(hton, table);
+}
 
 Toydb_share::Toydb_share() : data_mutex(std::make_unique<std::mutex>()) {
   thr_lock_init(&this->lock);
 }
 
 /**
- * Storage Engineの初期化を行う
+ * @brief Storage Engineの初期化を行う
  */
 static int toydb_init_func(void *p) {
   DBUG_TRACE;
 
   toydb_tables = std::make_unique<ToydbTables>();
 
-  toydb_hton = static_cast<handlerton *>(p);
-  toydb_hton->create = toydb_create_handler;
-  toydb_hton->state = SHOW_OPTION_YES;
+  auto *hton = static_cast<handlerton *>(p);
+  hton->create = toydb_create_handler;
+  hton->state = SHOW_OPTION_YES;
   // Truncate時はhandler::truncateではなく、delete_table=>createの流れにするためにテーブルの再作成を許可する
-  toydb_hton->flags = HTON_CAN_RECREATE;
+  hton->flags = HTON_CAN_RECREATE;
   // システムテーブルのサポートはしないので常にfalseを返す
-  toydb_hton->is_supported_system_table = [](const char *, const char *,
-                                             bool) -> bool { return false; };
+  hton->is_supported_system_table = [](const char *, const char *,
+                                       bool) -> bool { return false; };
 
   return 0;
 }
 
 /**
- * Storage Engineのdestructor
- *
- * 今回は特に処理はなし
+ * @brief Storage Engineのdestructor
  */
 static int toydb_deinit_func(void *p [[maybe_unused]]) {
   DBUG_TRACE;
@@ -106,9 +106,9 @@ static int toydb_deinit_func(void *p [[maybe_unused]]) {
 }
 
 Toydb_share *ha_toydb::get_share() {
-  Toydb_share *tmp_share = nullptr;
-
   DBUG_TRACE;
+
+  Toydb_share *tmp_share = nullptr;
 
   SharedHaDataLock lock(this);
 
@@ -128,11 +128,6 @@ Toydb_share *ha_toydb::get_share() {
   }
 
   return tmp_share;
-}
-
-static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table, bool,
-                                     MEM_ROOT *mem_root) {
-  return new (mem_root) ha_toydb(hton, table);
 }
 
 ha_toydb::ha_toydb(handlerton *hton, TABLE_SHARE *table_arg)
@@ -175,6 +170,8 @@ int ha_toydb::close(void) {
  * @brief handler::table::fieldからrow_dataへデータを読み出す
  */
 int ha_toydb::read_row_from_fields(std::vector<SupportedDBValue> &row_data) {
+  DBUG_TRACE;
+
   // handler::table::fieldからデータの読み取り（val_int()/val_str()）を呼ぶ前にread_setをセットする必要がある
   // read_setはビットマップで、どのフィールドを読み取るかを指定するためのもの
   // ただ今回は固定で全てのフィールドの読み書きを行うことにするので、全てのビットを立てる
@@ -318,6 +315,8 @@ int ha_toydb::index_end() {
  */
 int ha_toydb::decode_index_key(const uchar *key, uint key_len,
                                ToydbIndexKey &out_key) {
+  DBUG_TRACE;
+
   // 利用するインデックスの情報
   KEY *key_info = &this->table->key_info[this->index_cursor.mysql_index_no];
 
@@ -366,6 +365,8 @@ int ha_toydb::decode_index_key(const uchar *key, uint key_len,
  */
 static int store_row_to_buf(TABLE *table, uchar *buf,
                             const std::vector<SupportedDBValue> &row) {
+  DBUG_TRACE;
+
   // field->store()内でASSERT_COLUMN_MARKED_FOR_WRITEが呼ばれるため、
   // write_setに全カラムのビットを立てる必要がある
   my_bitmap_map *old_map = dbug_tmp_use_all_columns(table, table->write_set);
@@ -658,6 +659,8 @@ int ha_toydb::external_lock(THD *, int) {
  */
 THR_LOCK_DATA **ha_toydb::store_lock(THD *, THR_LOCK_DATA **to,
                                      enum thr_lock_type lock_type) {
+  DBUG_TRACE;
+
   // 今回は特にロックは実装しないが、ロックの種類が指定された場合はlock構造体のtypeにセットしてMySQLに返す
   if (lock_type != TL_IGNORE && this->lock.type == TL_UNLOCK)
     this->lock.type = lock_type;
@@ -731,6 +734,7 @@ int ha_toydb::create(const char *, TABLE *table_info, HA_CREATE_INFO *,
     std::vector<uint> pk_indices;
     pk_indices.reserve(pk->user_defined_key_parts);
     for (uint i = 0; i < pk->user_defined_key_parts; i++) {
+      // fieldnrは1始まりなので-1する
       pk_indices.push_back(pk->key_part[i].fieldnr - 1);
     }
     new_table.set_primary_key(std::move(pk_indices));

@@ -26,6 +26,7 @@
 
 #include <cstddef>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <variant>
@@ -33,6 +34,7 @@
 
 #include "field_types.h"
 #include "my_base.h"
+#include "my_dbug.h"
 #include "my_inttypes.h"
 #include "mysqld_error.h"
 

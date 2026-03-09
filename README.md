@@ -26,8 +26,6 @@ Below are the steps to build and run the MySQL server:
 # Build mysql-server
 mise run mysql:build
 
-# Initialize data directory and my.cnf
-# This shows the initial password for the root user
 mise run mysql:run-init
 
 # Run mysqld
@@ -37,13 +35,8 @@ mise run mysql:run
 After running the above commands, you can connect to the MySQL server using the following command:
 
 ```sh
+# you can login to mysql with password "root"
 mysql -u root -p
-```
-
-To reset the root password, you can execute the following SQL command:
-
-```sql
-ALTER USER root@'localhost' IDENTIFIED BY 'sample-password';
 ```
 
 To stop the MySQL server, you can run:

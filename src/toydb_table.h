@@ -72,7 +72,7 @@ struct ToydbKeyLess {
   bool operator()(const ToydbIndexKey &lhs, const ToydbIndexKey &rhs) const {
     // ここでは単純にkey_partsの辞書順で比較する
     return lhs.key_parts < rhs.key_parts;
-  };
+  }
 };
 
 /**
@@ -102,8 +102,6 @@ class ToydbTable final {
  public:
   using RowIterator =
       std::map<ToydbIndexKey, ToydbRow, ToydbKeyLess>::const_iterator;
-  using RowMutableIterator =
-      std::map<ToydbIndexKey, ToydbRow, ToydbKeyLess>::iterator;
 
   explicit ToydbTable(std::string name);
 

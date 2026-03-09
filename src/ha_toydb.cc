@@ -59,7 +59,7 @@
 #include "thr_lock.h"
 #include "typelib.h"
 
-// TODO: 再起動時にInternalエラーになるので修正する
+// TODO: あとでたぶんコメントも英語にする
 
 static std::unique_ptr<ToydbTables> toydb_tables;
 

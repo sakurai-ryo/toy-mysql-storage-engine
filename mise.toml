@@ -80,10 +80,20 @@ build/bin/mysqladmin -u root -p shutdown
 """
 
 [tasks."mysql:e2e"]
+# depends = ["mysql:build"]
 dir = "mysql-server"
 run = """
-ln -sfn ../../../../mysql-test/toydb mysql-server/mysql-test/suite/toydb
-./mysql-test/mysql-test-run.pl --suite=toydb --record
+ln -sfn ../../../mysql-test/toydb mysql-test/suite/toydb
+build/mysql-test/mysql-test-run.pl --suite=toydb --mysqld="--skip-log-bin"
+"""
+
+[tasks."mysql:gen-e2e-results"]
+# depends = ["mysql:build"]
+dir = "mysql-server"
+# https://dev.mysql.com/doc/dev/mysql-server/8.0.44/PAGE_GENERATE_TESTCASE_RESULT_FILE.html
+run = """
+ln -sfn ../../../mysql-test/toydb mysql-test/suite/toydb
+build/mysql-test/mysql-test-run.pl --suite=toydb --record --mysqld="--skip-log-bin"
 """
 
 [tasks.fmt]

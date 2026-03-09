@@ -1,5 +1,7 @@
 # Error handling tests for TOYDB storage engine
 
+INSTALL PLUGIN toydb SONAME "ha_toydb.so";
+
 --disable_warnings
 DROP TABLE IF EXISTS t1;
 --enable_warnings
@@ -44,3 +46,6 @@ TRUNCATE TABLE t1;
 SELECT * FROM t1;
 
 DROP TABLE t1;
+
+# Cleanup: restore server state
+UNINSTALL PLUGIN toydb;

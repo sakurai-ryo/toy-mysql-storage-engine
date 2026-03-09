@@ -1,3 +1,4 @@
+INSTALL PLUGIN toydb SONAME "ha_toydb.so";
 DROP TABLE IF EXISTS t_int, t_str, t_mixed;
 CREATE TABLE t_int (
 a TINYINT NOT NULL,
@@ -27,7 +28,7 @@ INSERT INTO t_str VALUES (3, 'special chars: !@#$%', 'test');
 SELECT * FROM t_str ORDER BY id;
 id	a	b
 1	hello world	fixed
-2
+2		
 3	special chars: !@#$%	test
 SELECT * FROM t_str WHERE a = 'hello world';
 id	a	b
@@ -57,3 +58,4 @@ Alice	30
 Bob	25
 Charlie	35
 DROP TABLE t_mixed;
+UNINSTALL PLUGIN toydb;

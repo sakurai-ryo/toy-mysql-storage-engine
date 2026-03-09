@@ -1,5 +1,7 @@
 # Data type support tests for TOYDB storage engine
 
+INSTALL PLUGIN toydb SONAME "ha_toydb.so";
+
 --disable_warnings
 DROP TABLE IF EXISTS t_int, t_str, t_mixed;
 --enable_warnings
@@ -57,3 +59,6 @@ SELECT * FROM t_mixed WHERE age > 28 ORDER BY id;
 SELECT name, age FROM t_mixed ORDER BY id;
 
 DROP TABLE t_mixed;
+
+# Cleanup: restore server state
+UNINSTALL PLUGIN toydb;

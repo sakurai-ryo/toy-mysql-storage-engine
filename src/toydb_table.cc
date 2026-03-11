@@ -40,6 +40,8 @@
 
 static bool check_type_match(enum_field_types expected,
                              const SupportedDBValue &value) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   switch (expected) {
     case enum_field_types::MYSQL_TYPE_TINY:
     case enum_field_types::MYSQL_TYPE_SHORT:
@@ -56,6 +58,8 @@ static bool check_type_match(enum_field_types expected,
 }
 
 static bool check_supported_type(enum_field_types type) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   switch (type) {
     case enum_field_types::MYSQL_TYPE_TINY:
     case enum_field_types::MYSQL_TYPE_SHORT:
@@ -70,9 +74,14 @@ static bool check_supported_type(enum_field_types type) {
   }
 }
 
-ToydbTable::ToydbTable(std::string name) : table_name(std::move(name)) {}
+ToydbTable::ToydbTable(std::string name) : table_name(std::move(name)) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
+}
 
 void ToydbTable::set_primary_key(std::vector<uint> indices) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   this->pk_column_indices = std::move(indices);
 }
 
@@ -81,6 +90,8 @@ void ToydbTable::set_primary_key(std::vector<uint> indices) {
  */
 ToydbIndexKey ToydbTable::build_key_from_row(
     const std::vector<SupportedDBValue> &row) const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   // pk_column_indicesにはPKのカラムインデックス値が入っているので
   // そこから対応するカラムの値を取り出してkey_partsに入れる
   ToydbIndexKey key;
@@ -90,25 +101,41 @@ ToydbIndexKey ToydbTable::build_key_from_row(
   return key;
 }
 
-ToydbTable::RowIterator ToydbTable::rows_begin() const { return rows.begin(); }
+ToydbTable::RowIterator ToydbTable::rows_begin() const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
+  return rows.begin();
+}
 
-ToydbTable::RowIterator ToydbTable::rows_end() const { return rows.end(); }
+ToydbTable::RowIterator ToydbTable::rows_end() const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
+  return rows.end();
+}
 
 ToydbTable::RowIterator ToydbTable::find_row(const ToydbIndexKey &key) const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   return rows.find(key);
 }
 
 ToydbTable::RowIterator ToydbTable::lower_bound_row(
     const ToydbIndexKey &key) const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   return rows.lower_bound(key);
 }
 
 ToydbTable::RowIterator ToydbTable::upper_bound_row(
     const ToydbIndexKey &key) const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   return rows.upper_bound(key);
 }
 
 int ToydbTable::add_column(const std::string &name, enum_field_types type) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   if (!this->rows.empty()) {
     return HA_ERR_INTERNAL_ERROR;
   }
@@ -122,6 +149,8 @@ int ToydbTable::add_column(const std::string &name, enum_field_types type) {
 }
 
 int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   if (row_data.size() != this->columns.size()) {
     return ER_WRONG_VALUE_COUNT;
   }
@@ -153,6 +182,8 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
 
 int ToydbTable::update_row(size_t row_index,
                            std::vector<SupportedDBValue> row_data) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   if (row_index >= this->rows.size()) {
     return HA_ERR_KEY_NOT_FOUND;
   }
@@ -174,6 +205,8 @@ int ToydbTable::update_row(size_t row_index,
 }
 
 int ToydbTable::delete_row(size_t row_index) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   if (row_index >= this->rows.size()) {
     return HA_ERR_KEY_NOT_FOUND;
   }
@@ -185,6 +218,8 @@ int ToydbTable::delete_row(size_t row_index) {
 
 int ToydbTable::update_row_by_key(const ToydbIndexKey &key,
                                   std::vector<SupportedDBValue> row_data) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   auto it = this->rows.find(key);
   if (it == this->rows.end()) return HA_ERR_KEY_NOT_FOUND;
 
@@ -213,28 +248,44 @@ int ToydbTable::update_row_by_key(const ToydbIndexKey &key,
 }
 
 int ToydbTable::delete_row_by_key(const ToydbIndexKey &key) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   auto it = this->rows.find(key);
   if (it == this->rows.end()) return HA_ERR_KEY_NOT_FOUND;
   this->rows.erase(it);
   return 0;
 }
 
-size_t ToydbTable::row_count() const { return this->rows.size(); }
+size_t ToydbTable::row_count() const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
+  return this->rows.size();
+}
 
 const std::vector<SupportedDBValue> &ToydbTable::get_row(
     size_t row_index) const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   auto it = this->rows.begin();
   std::advance(it, row_index);
   return it->second.values;
 }
 
 const std::vector<ToydbColumn> &ToydbTable::get_columns() const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   return this->columns;
 }
 
-void ToydbTable::clear_rows() { this->rows.clear(); }
+void ToydbTable::clear_rows() {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
+  this->rows.clear();
+}
 
 void ToydbTable::print_all() const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   std::cout << "--- Table: " << this->table_name << " ---\n";
 
   for (const auto &col : this->columns) {

@@ -65,10 +65,14 @@ static std::unique_ptr<ToydbTables> toydb_tables;
 
 static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table, bool,
                                      MEM_ROOT *mem_root) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   return new (mem_root) ha_toydb(hton, table);
 }
 
 Toydb_share::Toydb_share() : data_mutex(std::make_unique<std::mutex>()) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   thr_lock_init(&this->lock);
 }
 
@@ -76,7 +80,8 @@ Toydb_share::Toydb_share() : data_mutex(std::make_unique<std::mutex>()) {
  * @brief Storage Engineの初期化を行う
  */
 static int toydb_init_func(void *p) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   toydb_tables = std::make_unique<ToydbTables>();
 
@@ -96,7 +101,8 @@ static int toydb_init_func(void *p) {
  * @brief Storage Engineのdestructor
  */
 static int toydb_deinit_func(void *p [[maybe_unused]]) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   assert(p);
 
@@ -106,7 +112,8 @@ static int toydb_deinit_func(void *p [[maybe_unused]]) {
 }
 
 Toydb_share *ha_toydb::get_share() {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   Toydb_share *tmp_share = nullptr;
 
@@ -132,13 +139,16 @@ Toydb_share *ha_toydb::get_share() {
 
 ha_toydb::ha_toydb(handlerton *hton, TABLE_SHARE *table_arg)
     : handler(hton, table_arg) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   // ref_lengthはrefに保存する値のサイズを指定するためのメンバ
   // handler::refには行インデックスを保存するためsize_tのサイズを入れる
   this->ref_length = sizeof(size_t);
 }
 
 int ha_toydb::open(const char *, int, uint, const dd::Table *) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   this->share = this->get_share();
   if (this->share == nullptr) return HA_ERR_INTERNAL_ERROR;
@@ -156,7 +166,8 @@ int ha_toydb::open(const char *, int, uint, const dd::Table *) {
  * 上記は`handler::delete_table`のコメントに記載している
  */
 int ha_toydb::close(void) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   // テーブル削除前に該当テーブルのhandlerは全てcloseされるので、複数handlerがいても安全
   if (this->share != nullptr) {
@@ -170,7 +181,8 @@ int ha_toydb::close(void) {
  * @brief handler::table::fieldからrow_dataへデータを読み出す
  */
 int ha_toydb::read_row_from_fields(std::vector<SupportedDBValue> &row_data) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   // handler::table::fieldからデータの読み取り（val_int()/val_str()）を呼ぶ前にread_setをセットする必要がある
   // read_setはビットマップで、どのフィールドを読み取るかを指定するためのもの
@@ -223,7 +235,8 @@ int ha_toydb::read_row_from_fields(std::vector<SupportedDBValue> &row_data) {
  * @brief テーブルへの行の挿入
  */
 int ha_toydb::write_row(uchar *) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   std::vector<SupportedDBValue> row_data;
   int ret = this->read_row_from_fields(row_data);
@@ -242,7 +255,8 @@ int ha_toydb::write_row(uchar *) {
  * 引数には更新前と更新後のデータ両方が渡される
  */
 int ha_toydb::update_row(const uchar *, uchar *) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   std::vector<SupportedDBValue> row_data;
   int ret = this->read_row_from_fields(row_data);
@@ -268,7 +282,8 @@ int ha_toydb::update_row(const uchar *, uchar *) {
  * @brief テーブルの行の削除
  */
 int ha_toydb::delete_row(const uchar *) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
@@ -290,7 +305,8 @@ int ha_toydb::delete_row(const uchar *) {
  * idxは利用するインデックスの番号が入る
  */
 int ha_toydb::index_init(uint idx, bool) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   this->index_cursor = ToydbIndexCursor{};
   this->index_cursor.mysql_index_no = idx;
   this->scan_cursor.positioned = false;
@@ -302,7 +318,8 @@ int ha_toydb::index_init(uint idx, bool) {
  * @brief インデックススキャンの終了
  */
 int ha_toydb::index_end() {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   this->index_cursor = ToydbIndexCursor{};
   this->active_index = MAX_KEY;
   return 0;
@@ -315,7 +332,8 @@ int ha_toydb::index_end() {
  */
 int ha_toydb::decode_index_key(const uchar *key, uint key_len,
                                ToydbIndexKey &out_key) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   // 利用するインデックスの情報
   KEY *key_info = &this->table->key_info[this->index_cursor.mysql_index_no];
@@ -365,7 +383,8 @@ int ha_toydb::decode_index_key(const uchar *key, uint key_len,
  */
 static int store_row_to_buf(TABLE *table, uchar *buf,
                             const std::vector<SupportedDBValue> &row) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   // field->store()内でASSERT_COLUMN_MARKED_FOR_WRITEが呼ばれるため、
   // write_setに全カラムのビットを立てる必要がある
@@ -395,9 +414,46 @@ static int store_row_to_buf(TABLE *table, uchar *buf,
 /**
  * @brief Clustered Indexを利用してキーに一致する行を検索する
  */
+static const char *ha_rkey_function_name(enum ha_rkey_function flag) {
+  switch (flag) {
+    case HA_READ_KEY_EXACT:
+      return "HA_READ_KEY_EXACT";
+    case HA_READ_KEY_OR_NEXT:
+      return "HA_READ_KEY_OR_NEXT";
+    case HA_READ_KEY_OR_PREV:
+      return "HA_READ_KEY_OR_PREV";
+    case HA_READ_AFTER_KEY:
+      return "HA_READ_AFTER_KEY";
+    case HA_READ_BEFORE_KEY:
+      return "HA_READ_BEFORE_KEY";
+    case HA_READ_PREFIX:
+      return "HA_READ_PREFIX";
+    case HA_READ_PREFIX_LAST:
+      return "HA_READ_PREFIX_LAST";
+    case HA_READ_PREFIX_LAST_OR_PREV:
+      return "HA_READ_PREFIX_LAST_OR_PREV";
+    case HA_READ_MBR_CONTAIN:
+      return "HA_READ_MBR_CONTAIN";
+    case HA_READ_MBR_INTERSECT:
+      return "HA_READ_MBR_INTERSECT";
+    case HA_READ_MBR_WITHIN:
+      return "HA_READ_MBR_WITHIN";
+    case HA_READ_MBR_DISJOINT:
+      return "HA_READ_MBR_DISJOINT";
+    case HA_READ_MBR_EQUAL:
+      return "HA_READ_MBR_EQUAL";
+    case HA_READ_NEAREST_NEIGHBOR:
+      return "HA_READ_NEAREST_NEIGHBOR";
+    default:
+      return "HA_READ_INVALID";
+  }
+}
+
 int ha_toydb::index_read(uchar *buf, const uchar *key, uint key_len,
                          enum ha_rkey_function find_flag) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb",
+             ("%s find_flag=%s", __func__, ha_rkey_function_name(find_flag)));
 
   ToydbIndexKey search_key;
   int ret = decode_index_key(key, key_len, search_key);
@@ -458,7 +514,8 @@ int ha_toydb::index_read(uchar *buf, const uchar *key, uint key_len,
  * @brief Clustered Index上で次の行を取得する
  */
 int ha_toydb::index_next(uchar *buf) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   if (!this->index_cursor.positioned ||
       !this->index_cursor.current_index_key.has_value())
@@ -484,7 +541,8 @@ int ha_toydb::index_next(uchar *buf) {
  * @brief Clustered Index上で前の行を取得する
  */
 int ha_toydb::index_prev(uchar *buf) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   if (!this->index_cursor.positioned ||
       !this->index_cursor.current_index_key.has_value())
@@ -509,7 +567,8 @@ int ha_toydb::index_prev(uchar *buf) {
  * @brief Clustered Indexの先頭行を取得する
  */
 int ha_toydb::index_first(uchar *buf) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
   auto *toydb_table = this->share->toydb_table;
@@ -528,7 +587,8 @@ int ha_toydb::index_first(uchar *buf) {
  * @brief Clustered Indexの末尾行を取得する
  */
 int ha_toydb::index_last(uchar *buf) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
   auto *toydb_table = this->share->toydb_table;
@@ -549,14 +609,16 @@ int ha_toydb::index_last(uchar *buf) {
  * @brief テーブルスキャン操作の初期化を行う
  */
 int ha_toydb::rnd_init(bool) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   this->scan_cursor = ToydbScanCursor{};
   this->index_cursor.positioned = false;
   return 0;
 }
 
 int ha_toydb::rnd_end() {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   return 0;
 }
 
@@ -564,7 +626,8 @@ int ha_toydb::rnd_end() {
  * @brief テーブルスキャン操作で次の行を取得する
  */
 int ha_toydb::rnd_next(uchar *buf) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
@@ -587,12 +650,14 @@ int ha_toydb::rnd_next(uchar *buf) {
  * handler::refに現在の行位置を保存して、サーバー層がrnd_posで任意位置から読み出せるようにする
  */
 void ha_toydb::position(const uchar *) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   my_store_ptr(this->ref, this->ref_length, this->scan_cursor.current_pos);
 }
 
 int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
@@ -615,7 +680,8 @@ int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
  * @brief optimizerへテーブルの統計情報を提供する
  */
 int ha_toydb::info(uint) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
@@ -630,12 +696,14 @@ int ha_toydb::info(uint) {
  * 今回は特になし
  */
 int ha_toydb::extra(enum ha_extra_function) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   return 0;
 }
 
 int ha_toydb::delete_all_rows() {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
@@ -650,7 +718,8 @@ int ha_toydb::delete_all_rows() {
  * 今回はデータは全てインメモリなので特になし
  */
 int ha_toydb::external_lock(THD *, int) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   return 0;
 }
 
@@ -659,7 +728,8 @@ int ha_toydb::external_lock(THD *, int) {
  */
 THR_LOCK_DATA **ha_toydb::store_lock(THD *, THR_LOCK_DATA **to,
                                      enum thr_lock_type lock_type) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   // 今回は特にロックは実装しないが、ロックの種類が指定された場合はlock構造体のtypeにセットしてMySQLに返す
   if (lock_type != TL_IGNORE && this->lock.type == TL_UNLOCK)
@@ -674,7 +744,8 @@ THR_LOCK_DATA **ha_toydb::store_lock(THD *, THR_LOCK_DATA **to,
  * テーブル削除前にcloseされる可能性もあるので、Toydb_shareには依存しないようにする
  */
 int ha_toydb::delete_table(const char *name, const dd::Table *) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   // nameはパス形式（例:"./db/table"）なので、最後の'/'以降をテーブル名として取得する
   std::string_view path(name);
@@ -693,7 +764,8 @@ int ha_toydb::delete_table(const char *name, const dd::Table *) {
  */
 int ha_toydb::rename_table(const char *, const char *, const dd::Table *,
                            dd::Table *) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   return HA_ERR_WRONG_COMMAND;
 }
 
@@ -703,13 +775,15 @@ int ha_toydb::rename_table(const char *, const char *, const dd::Table *,
  * 今回は適当な行数を返す
  */
 ha_rows ha_toydb::records_in_range(uint, key_range *, key_range *) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
   return 10;
 }
 
 int ha_toydb::create(const char *, TABLE *table_info, HA_CREATE_INFO *,
                      dd::Table *) {
-  DBUG_TRACE;
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
 
   const char *table_name = table_info->s->table_name.str;
 

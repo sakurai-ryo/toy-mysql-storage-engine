@@ -69,8 +69,9 @@ build/bin/mysqld --defaults-file=run/my.cnf --initialize-insecure --init-file=${
 [tasks."mysql:run"]
 dir = "mysql-server"
 # https://dev.mysql.com/doc/refman/8.4/en/starting-server.html
+# https://dev.mysql.com/doc/refman/8.4/en/dbug-package.html
 run = """
-build/bin/mysqld --defaults-file=run/my.cnf
+build/bin/mysqld --defaults-file=run/my.cnf --debug='d,toydb:i:T'
 """
 
 [tasks."mysql:stop"]

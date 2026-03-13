@@ -1,6 +1,13 @@
 min_version = "2025.12.12"
 
 [tasks."mysql:configure"]
+sources = [
+    "mysql-server/**/CMakeLists.txt",
+    "mysql-server/cmake/**",
+    "!mysql-server/build/**",
+    "!mysql-server/run/**",
+    "!mysql-server/mysql-test/**",
+]
 run = """
 ln -sfn ../../src mysql-server/storage/toydb
 
@@ -19,7 +26,13 @@ cmake --build . --target GenError
 """
 
 [tasks."mysql:build"]
-# depends = ["mysql:configure"]
+depends = ["mysql:configure"]
+sources = [
+    "mysql-server/**",
+    "!mysql-server/build/**",
+    "!mysql-server/run/**",
+    "!mysql-server/mysql-test/**",
+]
 dir = "mysql-server"
 run = """
 ln -sfn ../../src storage/toydb
@@ -27,24 +40,21 @@ ln -sfn ../../src storage/toydb
 cd build
 # TODO: pass number of cpu cores dynamically
 make -j16 --
-
-echo "Execute 'INSTALL PLUGIN toydb SONAME "ha_toydb.so";' to install the storage engine"
 """
 
 [tasks."mysql:build-storage-engine"]
-# depends = ["mysql:configure"]
+depends = ["mysql:configure"]
+sources = ["src/**"]
 dir = "mysql-server"
 run = """
 ln -sfn ../../src storage/toydb
 
 cd build
 cmake --build . --target toydb -- -j12
-
-echo "Execute 'INSTALL PLUGIN toydb SONAME "ha_toydb.so";' to install the storage engine"
 """
 
 [tasks."mysql:run-init"]
-# depends = ["mysql:build"]
+depends = ["mysql:build"]
 dir = "mysql-server"
 # https://dev.mysql.com/doc/refman/8.4/en/data-directory-initialization.html
 run = """
@@ -58,6 +68,7 @@ datadir=${PWD}/run/data
 disable_log_bin
 EOF
 
+# Set root password and install toydb
 cat <<EOF > run/init.sql
 ALTER USER 'root'@'localhost' IDENTIFIED BY 'root';
 INSTALL PLUGIN toydb SONAME "ha_toydb.so";
@@ -67,6 +78,7 @@ build/bin/mysqld --defaults-file=run/my.cnf --initialize-insecure --init-file=${
 """
 
 [tasks."mysql:run"]
+depends = ["mysql:build"]
 dir = "mysql-server"
 # https://dev.mysql.com/doc/refman/8.4/en/starting-server.html
 # https://dev.mysql.com/doc/refman/8.4/en/dbug-package.html
@@ -77,11 +89,11 @@ build/bin/mysqld --defaults-file=run/my.cnf --debug='d,toydb:i:T'
 [tasks."mysql:stop"]
 dir = "mysql-server"
 run = """
-build/bin/mysqladmin -u root -p shutdown
+build/bin/mysqladmin -u root -proot shutdown
 """
 
 [tasks."mysql:e2e"]
-# depends = ["mysql:build"]
+depends = ["mysql:build"]
 dir = "mysql-server"
 run = """
 ln -sfn ../../../mysql-test/toydb mysql-test/suite/toydb
@@ -89,7 +101,7 @@ build/mysql-test/mysql-test-run.pl --suite=toydb --mysqld="--skip-log-bin"
 """
 
 [tasks."mysql:gen-e2e-results"]
-# depends = ["mysql:build"]
+depends = ["mysql:build"]
 dir = "mysql-server"
 # https://dev.mysql.com/doc/dev/mysql-server/8.0.44/PAGE_GENERATE_TESTCASE_RESULT_FILE.html
 run = """

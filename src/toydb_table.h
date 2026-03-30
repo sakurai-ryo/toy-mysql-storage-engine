@@ -32,6 +32,7 @@
 #include <variant>
 #include <vector>
 
+#include "absl/container/btree_map.h"
 #include "field_types.h"
 #include "my_inttypes.h"
 
@@ -61,17 +62,12 @@ struct ToydbRow {
 struct ToydbIndexKey {
   // いつか複合キーをサポートできるようにvectorにしておく
   std::vector<SupportedDBValue> key_parts;
-};
 
-/**
- * @brief インデックスの比較関数
- *
- * std::mapでClustered Indexを実装する際の比較に利用する
- */
-struct ToydbKeyLess {
-  bool operator()(const ToydbIndexKey &lhs, const ToydbIndexKey &rhs) const {
-    // ここでは単純にkey_partsの辞書順で比較する
-    return lhs.key_parts < rhs.key_parts;
+  bool operator<(const ToydbIndexKey &rhs) const {
+    return key_parts < rhs.key_parts;
+  }
+  bool operator==(const ToydbIndexKey &rhs) const {
+    return key_parts == rhs.key_parts;
   }
 };
 
@@ -97,11 +93,10 @@ class ToydbTable final {
   // DDLでのカラムの定義順でインデックス番号が決まる
   std::vector<uint> pk_column_indices;
 
-  std::map<ToydbIndexKey, ToydbRow, ToydbKeyLess> rows;
+  absl::btree_map<ToydbIndexKey, ToydbRow> rows;
 
  public:
-  using RowIterator =
-      std::map<ToydbIndexKey, ToydbRow, ToydbKeyLess>::const_iterator;
+  using RowIterator = absl::btree_map<ToydbIndexKey, ToydbRow>::const_iterator;
 
   explicit ToydbTable(std::string name);
 
@@ -124,6 +119,7 @@ class ToydbTable final {
 
   RowIterator rows_begin() const;
   RowIterator rows_end() const;
+  RowIterator rows_last() const;
   RowIterator find_row(const ToydbIndexKey &key) const;
   RowIterator lower_bound_row(const ToydbIndexKey &key) const;
   RowIterator upper_bound_row(const ToydbIndexKey &key) const;

@@ -113,6 +113,14 @@ ToydbTable::RowIterator ToydbTable::rows_end() const {
   return rows.end();
 }
 
+ToydbTable::RowIterator ToydbTable::rows_last() const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
+  auto iter = rows.end();
+  --iter;
+  return iter;
+}
+
 ToydbTable::RowIterator ToydbTable::find_row(const ToydbIndexKey &key) const {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
@@ -233,7 +241,7 @@ int ToydbTable::update_row_by_key(const ToydbIndexKey &key,
   // PKカラムの値が変わった場合はキーを差し替える
   if (!pk_column_indices.empty()) {
     ToydbIndexKey new_key = build_key_from_row(row_data);
-    if (ToydbKeyLess{}(key, new_key) || ToydbKeyLess{}(new_key, key)) {
+    if (!(new_key == key)) {
       // 新しいキーが既に存在する場合は重複エラー
       if (this->rows.contains(new_key)) return HA_ERR_FOUND_DUPP_KEY;
       ToydbRow row{it->second.id, std::move(row_data)};

@@ -27,9 +27,9 @@
 #include <optional>
 #include <vector>
 
-#include "my_base.h" /* ha_rows */
-#include "sql/handler.h" /* handler */
-#include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
+#include "my_base.h"
+#include "sql/handler.h"
+#include "thr_lock.h"
 
 #include "toydb_table.h"
 

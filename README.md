@@ -73,17 +73,4 @@ SELECT * FROM t2;
 CREATE TABLE t3 (id INT, name VARCHAR(255), PRIMARY KEY (id)) ENGINE=TOYDB;
 INSERT INTO t3 VALUES (1, 'Alice');
 SELECT * FROM t3;
-
--- Insert 10000 rows into t3 using CTE
-SET SESSION cte_max_recursion_depth = 10000;
-INSERT INTO t3 (id, name)
-WITH RECURSIVE cte AS (
-    SELECT 1 AS n
-    UNION ALL
-    SELECT n + 1 FROM cte WHERE n < 10000
-)
-SELECT 
-    n, 
-    CONCAT('User_', n)
-FROM cte;
 ```

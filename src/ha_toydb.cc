@@ -59,8 +59,6 @@
 #include "thr_lock.h"
 #include "typelib.h"
 
-// TODO: あとでたぶんコメントも英語にする
-
 static std::unique_ptr<ToydbTables> toydb_tables;
 
 static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table, bool,
@@ -595,8 +593,7 @@ int ha_toydb::index_last(uchar *buf) {
 
   if (toydb_table->row_count() == 0) return HA_ERR_END_OF_FILE;
 
-  auto iter = toydb_table->rows_end();
-  --iter;
+  auto iter = toydb_table->rows_last();
 
   this->index_cursor.current_index_key = iter->first;
   this->index_cursor.positioned = true;

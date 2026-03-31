@@ -96,7 +96,7 @@ ToydbIndexKey ToydbTable::build_key_from_row(
   // そこから対応するカラムの値を取り出してkey_partsに入れる
   ToydbIndexKey key;
   for (uint idx : this->pk_column_indices) {
-    key.key_parts.push_back(row[idx]);
+    key.key_parts.push_back(row.at(idx));
   }
   return key;
 }
@@ -104,19 +104,19 @@ ToydbIndexKey ToydbTable::build_key_from_row(
 ToydbTable::RowIterator ToydbTable::rows_begin() const {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
-  return rows.begin();
+  return this->rows.begin();
 }
 
 ToydbTable::RowIterator ToydbTable::rows_end() const {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
-  return rows.end();
+  return this->rows.end();
 }
 
 ToydbTable::RowIterator ToydbTable::rows_last() const {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
-  auto iter = rows.end();
+  auto iter = this->rows.end();
   --iter;
   return iter;
 }
@@ -124,21 +124,21 @@ ToydbTable::RowIterator ToydbTable::rows_last() const {
 ToydbTable::RowIterator ToydbTable::find_row(const ToydbIndexKey &key) const {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
-  return rows.find(key);
+  return this->rows.find(key);
 }
 
 ToydbTable::RowIterator ToydbTable::lower_bound_row(
     const ToydbIndexKey &key) const {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
-  return rows.lower_bound(key);
+  return this->rows.lower_bound(key);
 }
 
 ToydbTable::RowIterator ToydbTable::upper_bound_row(
     const ToydbIndexKey &key) const {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
-  return rows.upper_bound(key);
+  return this->rows.upper_bound(key);
 }
 
 int ToydbTable::add_column(const std::string &name, enum_field_types type) {
@@ -152,7 +152,7 @@ int ToydbTable::add_column(const std::string &name, enum_field_types type) {
     return HA_ERR_UNSUPPORTED;
   }
 
-  columns.push_back({name, type});
+  this->columns.push_back({name, type});
   return 0;
 }
 
@@ -164,7 +164,7 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
   }
 
   for (size_t i = 0; i < this->columns.size(); ++i) {
-    if (!check_type_match(this->columns[i].type, row_data[i])) {
+    if (!check_type_match(this->columns.at(i).type, row_data.at(i))) {
       return ER_INCORRECT_TYPE;
     }
   }
@@ -201,7 +201,7 @@ int ToydbTable::update_row(size_t row_index,
   }
 
   for (size_t i = 0; i < this->columns.size(); ++i) {
-    if (!check_type_match(this->columns[i].type, row_data[i])) {
+    if (!check_type_match(this->columns.at(i).type, row_data.at(i))) {
       return ER_INCORRECT_TYPE;
     }
   }
@@ -234,7 +234,7 @@ int ToydbTable::update_row_by_key(const ToydbIndexKey &key,
   if (row_data.size() != this->columns.size()) return ER_WRONG_VALUE_COUNT;
 
   for (size_t i = 0; i < this->columns.size(); ++i) {
-    if (!check_type_match(this->columns[i].type, row_data[i]))
+    if (!check_type_match(this->columns.at(i).type, row_data.at(i)))
       return ER_INCORRECT_TYPE;
   }
 

@@ -24,9 +24,11 @@
 
 #include "ha_toydb.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstring>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -767,14 +769,42 @@ int ha_toydb::rename_table(const char *, const char *, const dd::Table *,
 }
 
 /**
- * @brief 渡されたレンジ内のテーブルの行数を返す
- *
- * 今回は適当な行数を返す
+ * @brief 渡されたキーレンジ内のテーブルの行数を返す
  */
-ha_rows ha_toydb::records_in_range(uint, key_range *, key_range *) {
-  // DBUG_TRACE;
+ha_rows ha_toydb::records_in_range(uint index_num, key_range *min_key,
+                                   key_range *max_key) {
   DBUG_PRINT("toydb", ("%s", __func__));
-  return 10;
+
+  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+
+  active_index = index_num;
+  if (active_index != 0) {
+    DBUG_PRINT("error", ("Unsupported index_num: %u", index_num));
+    return HA_POS_ERROR;
+  }
+
+  ToydbIndexKey min_index_key;
+  if (decode_index_key(min_key->key, min_key->length, min_index_key) != 0) {
+    return HA_POS_ERROR;
+  }
+
+  ToydbIndexKey max_index_key;
+  if (decode_index_key(max_key->key, max_key->length, max_index_key) != 0) {
+    return HA_POS_ERROR;
+  }
+
+  ToydbTable *table = this->share->toydb_table;
+
+  auto start = min_key->flag == HA_READ_AFTER_KEY
+                   ? table->upper_bound_row(min_index_key)
+                   : table->lower_bound_row(min_index_key);
+
+  auto end = max_key->flag == HA_READ_BEFORE_KEY
+                 ? table->lower_bound_row(max_index_key)
+                 : table->upper_bound_row(max_index_key);
+
+  ha_rows n_rows = std::max(0L, std::distance(start, end));
+  return n_rows > 0 ? n_rows : 1;
 }
 
 int ha_toydb::create(const char *, TABLE *table_info, HA_CREATE_INFO *,

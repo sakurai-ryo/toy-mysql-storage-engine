@@ -190,6 +190,7 @@ class ha_toydb : public handler {
   int create(const char *, TABLE *, HA_CREATE_INFO *table_info,
              dd::Table *) override;  ///< required
 
+  // 呼び出し元のwrite_row()で既にdata_mutexを取得済みの前提
   void get_auto_increment(ulonglong offset, ulonglong increment,
                           ulonglong nb_desired_values, ulonglong *first_value,
                           ulonglong *nb_reserved_values) override;

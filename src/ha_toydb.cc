@@ -848,17 +848,11 @@ int ha_toydb::create(const char *, TABLE *table_info,
 
   ToydbTable new_table(table_name);
 
-  int col_index = 0;
-  for (Field **f = table_info->field; *f != nullptr; f++, col_index++) {
+  for (Field **f = table_info->field; *f != nullptr; f++) {
     DBUG_PRINT("field",
                ("Field: name=%s, type=%d", (*f)->field_name, (*f)->type()));
     int ret = new_table.add_column((*f)->field_name, (*f)->type());
     if (ret != 0) return ret;
-
-    if ((*f)->is_flag_set(AUTO_INCREMENT_FLAG)) {
-      // AUTO_INCREMENTなカラムのインデックス番号を記録しておく
-      new_table.set_auto_inc_column(col_index);
-    }
   }
 
   // PRIMARY KEYが定義されている場合、そのカラムインデックスを設定する
@@ -875,8 +869,7 @@ int ha_toydb::create(const char *, TABLE *table_info,
 
   // CREATE TABLE ... AUTO_INCREMENT=N で初期値が指定された場合に反映する
   if (create_info->auto_increment_value > 0) {
-    // データ挿入時に+1するので、ここでは-1しとく
-    new_table.update_auto_inc_value(create_info->auto_increment_value - 1);
+    new_table.set_auto_inc_value(create_info->auto_increment_value);
   }
 
   toydb_tables->tables.emplace(table_name, std::move(new_table));

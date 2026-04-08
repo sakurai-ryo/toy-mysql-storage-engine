@@ -30,6 +30,7 @@
 #include <cstring>
 #include <iterator>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -47,6 +48,7 @@
 #include "mysql/plugin.h"
 #include "mysql/service_thd_alloc.h"
 #include "mysql/status_var.h"
+#include "mysql_com.h"
 #include "mysqld_error.h"
 #include "sql/derror.h"
 #include "sql/field.h"
@@ -234,16 +236,33 @@ int ha_toydb::read_row_from_fields(std::vector<SupportedDBValue> &row_data) {
 /**
  * @brief テーブルへの行の挿入
  */
-int ha_toydb::write_row(uchar *) {
+int ha_toydb::write_row(uchar *buf) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
+
+  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+
+  // AUTO_INCREMENTカラムがある場合は値の採番を行う
+  // table->record[0]: 書き込まれた新しい行
+  // table->record[1]: 更新前の行（INSERTの場合はnullptr）
+  if (this->table->next_number_field != nullptr &&
+      buf == this->table->record[0]) {
+    int err = this->update_auto_increment();
+    if (err != 0) return err;
+  }
 
   std::vector<SupportedDBValue> row_data;
   int ret = this->read_row_from_fields(row_data);
 
   if (ret == 0) {
-    std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
     ret = this->share->toydb_table->insert_row(std::move(row_data));
+
+    // 挿入成功時にAUTO_INCREMENTカウンタを更新する
+    if (ret == 0 && this->table->next_number_field != nullptr) {
+      ulonglong auto_inc_val =
+          static_cast<ulonglong>(this->table->next_number_field->val_int());
+      this->share->toydb_table->update_auto_inc_value(auto_inc_val);
+    }
   }
 
   return ret;
@@ -678,14 +697,21 @@ int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
 /**
  * @brief optimizerへテーブルの統計情報を提供する
  */
-int ha_toydb::info(uint) {
+int ha_toydb::info(uint flag) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  // 一旦行数だけ追加する
   this->stats.records = this->share->toydb_table->row_count();
+
+  // InnoDBがhandler::info内でauto_increment_valueを更新しているのをパクってる
+  if ((flag & HA_STATUS_AUTO) != 0) {
+    DBUG_PRINT("toydb", ("Updating auto_increment_value in stats: %llu",
+                         this->share->toydb_table->get_next_auto_inc_value()));
+    this->stats.auto_increment_value =
+        this->share->toydb_table->get_next_auto_inc_value();
+  }
   return 0;
 }
 
@@ -807,8 +833,8 @@ ha_rows ha_toydb::records_in_range(uint index_num, key_range *min_key,
   return n_rows > 0 ? n_rows : 1;
 }
 
-int ha_toydb::create(const char *, TABLE *table_info, HA_CREATE_INFO *,
-                     dd::Table *) {
+int ha_toydb::create(const char *, TABLE *table_info,
+                     HA_CREATE_INFO *create_info, dd::Table *) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
 
@@ -822,11 +848,17 @@ int ha_toydb::create(const char *, TABLE *table_info, HA_CREATE_INFO *,
 
   ToydbTable new_table(table_name);
 
-  for (Field **f = table_info->field; *f != nullptr; f++) {
+  int col_index = 0;
+  for (Field **f = table_info->field; *f != nullptr; f++, col_index++) {
     DBUG_PRINT("field",
                ("Field: name=%s, type=%d", (*f)->field_name, (*f)->type()));
     int ret = new_table.add_column((*f)->field_name, (*f)->type());
     if (ret != 0) return ret;
+
+    if ((*f)->is_flag_set(AUTO_INCREMENT_FLAG)) {
+      // AUTO_INCREMENTなカラムのインデックス番号を記録しておく
+      new_table.set_auto_inc_column(col_index);
+    }
   }
 
   // PRIMARY KEYが定義されている場合、そのカラムインデックスを設定する
@@ -841,9 +873,30 @@ int ha_toydb::create(const char *, TABLE *table_info, HA_CREATE_INFO *,
     new_table.set_primary_key(std::move(pk_indices));
   }
 
+  // CREATE TABLE ... AUTO_INCREMENT=N で初期値が指定された場合に反映する
+  if (create_info->auto_increment_value > 0) {
+    // データ挿入時に+1するので、ここでは-1しとく
+    new_table.update_auto_inc_value(create_info->auto_increment_value - 1);
+  }
+
   toydb_tables->tables.emplace(table_name, std::move(new_table));
 
   return 0;
+}
+
+/**
+ * @brief AUTO_INCREMENTの値を取得する
+ */
+void ha_toydb::get_auto_increment(ulonglong offset, ulonglong increment,
+                                  ulonglong nb_desired_values,
+                                  ulonglong *first_value,
+                                  ulonglong *nb_reserved_values) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
+
+  // 呼び出し元のwrite_row()で既にdata_mutexを取得済みなのでここではロックしない
+  *first_value = this->share->toydb_table->get_next_auto_inc_value();
+  *nb_reserved_values = ULLONG_MAX;
 }
 
 static struct st_mysql_storage_engine toydb_storage_engine = {

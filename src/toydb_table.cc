@@ -85,6 +85,26 @@ void ToydbTable::set_primary_key(std::vector<uint> indices) {
   this->pk_column_indices = std::move(indices);
 }
 
+void ToydbTable::set_auto_inc_column(int column_index) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
+  this->auto_inc_column_index = column_index;
+}
+
+ulonglong ToydbTable::get_next_auto_inc_value() const {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
+  return this->next_auto_inc_value;
+}
+
+void ToydbTable::update_auto_inc_value(ulonglong value) {
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s", __func__));
+  if (value >= this->next_auto_inc_value) {
+    this->next_auto_inc_value = value + 1;
+  }
+}
+
 /**
  * @brief 行データからインデックスキーを構築する
  */

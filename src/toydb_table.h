@@ -89,6 +89,11 @@ class ToydbTable final {
 
   ToydbRowId next_row_id{1};
 
+  // AUTO_INCREMENTカラムのインデックス番号（未設定時は-1）
+  int auto_inc_column_index{-1};
+  // 次に払い出すAUTO_INCREMENT値
+  ulonglong next_auto_inc_value{1};
+
   // PRIMARY KEYを構成するカラムのインデックス番号
   // DDLでのカラムの定義順でインデックス番号が決まる
   std::vector<uint> pk_column_indices;
@@ -101,6 +106,9 @@ class ToydbTable final {
   explicit ToydbTable(std::string name);
 
   void set_primary_key(std::vector<uint> indices);
+  void set_auto_inc_column(int column_index);
+  ulonglong get_next_auto_inc_value() const;
+  void update_auto_inc_value(ulonglong value);
   ToydbIndexKey build_key_from_row(
       const std::vector<SupportedDBValue> &row) const;
 

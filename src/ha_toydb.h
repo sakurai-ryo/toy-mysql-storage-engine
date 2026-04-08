@@ -190,6 +190,10 @@ class ha_toydb : public handler {
   int create(const char *, TABLE *, HA_CREATE_INFO *table_info,
              dd::Table *) override;  ///< required
 
+  void get_auto_increment(ulonglong offset, ulonglong increment,
+                          ulonglong nb_desired_values, ulonglong *first_value,
+                          ulonglong *nb_reserved_values) override;
+
   THR_LOCK_DATA **store_lock(
       THD *thd, THR_LOCK_DATA **to,
       enum thr_lock_type lock_type) override;  ///< required

@@ -28,7 +28,8 @@ cmake --build . --target GenError
 [tasks."mysql:build"]
 depends = ["mysql:configure"]
 sources = [
-    "mysql-server/**",
+    "mysql-server/**/*",
+    "src/**/*",
     "!mysql-server/build/**",
     "!mysql-server/run/**",
     "!mysql-server/mysql-test/**",
@@ -44,7 +45,7 @@ make -j16 --
 
 [tasks."mysql:build-storage-engine"]
 depends = ["mysql:configure"]
-sources = ["src/**"]
+sources = ["src/**/*"]
 dir = "mysql-server"
 run = """
 ln -sfn ../../src storage/toydb

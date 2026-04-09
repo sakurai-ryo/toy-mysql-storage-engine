@@ -66,8 +66,6 @@ struct ToydbScanCursor {
  */
 struct ToydbIndexCursor {
   bool positioned{false};
-  // 利用するインデックスの番号
-  uint mysql_index_no{MAX_KEY};
   // PKスキャン時: Clustered Indexのキー
   // セカンダリスキャン時: セカンダリ複合キー（PKサフィックス含む）
   std::optional<ToydbIndexKey> current_index_key;
@@ -207,6 +205,7 @@ class ha_toydb : public handler {
 
  private:
   bool is_primary_key_index(uint idx) const;
+  ToydbIndexKey resolve_pk_key_from_cursor() const;
   int read_row_from_fields(std::vector<SupportedDBValue> &row_data);
   int decode_index_key(const uchar *key, uint key_len, ToydbIndexKey &out_key);
 

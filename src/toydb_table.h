@@ -165,6 +165,14 @@ class ToydbTable final {
 };
 
 /**
+ * @brief セカンダリキーのPK部分以外がプレフィックスと一致するか判定
+ *
+ * UNIQUE判定時はPKを無視して判定したいため
+ */
+bool key_prefix_matches(const ToydbIndexKey &full_key,
+                        const ToydbIndexKey &prefix);
+
+/**
  * @brief 全テーブルの定義と実データを管理する
  */
 struct ToydbTables {

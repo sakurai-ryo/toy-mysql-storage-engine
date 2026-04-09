@@ -152,6 +152,14 @@ bool ha_toydb::is_primary_key_index(uint idx) const {
   return idx == this->table->s->primary_key;
 }
 
+ToydbIndexKey ha_toydb::resolve_pk_key_from_cursor() const {
+  if (!is_primary_key_index(this->active_index)) {
+    return this->share->toydb_table->extract_pk_key_from_secondary(
+        this->active_index, *this->index_cursor.current_index_key);
+  }
+  return *this->index_cursor.current_index_key;
+}
+
 int ha_toydb::open(const char *, int, uint, const dd::Table *) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
@@ -289,15 +297,7 @@ int ha_toydb::update_row(const uchar *, uchar *) {
     if (this->index_cursor.positioned &&
         this->index_cursor.current_index_key.has_value()) {
       // インデックススキャン中はキーベースで更新する
-      ToydbIndexKey pk_key;
-      if (!is_primary_key_index(this->index_cursor.mysql_index_no)) {
-        // セカンダリスキャン中: 複合キーからPKキーを抽出
-        pk_key = this->share->toydb_table->extract_pk_key_from_secondary(
-            this->index_cursor.mysql_index_no,
-            *this->index_cursor.current_index_key);
-      } else {
-        pk_key = *this->index_cursor.current_index_key;
-      }
+      ToydbIndexKey pk_key = resolve_pk_key_from_cursor();
       ret = this->share->toydb_table->update_row_by_key(pk_key,
                                                         std::move(row_data));
     } else {
@@ -322,14 +322,7 @@ int ha_toydb::delete_row(const uchar *) {
   if (this->index_cursor.positioned &&
       this->index_cursor.current_index_key.has_value()) {
     // インデックススキャン中はキーベースで削除する
-    ToydbIndexKey pk_key;
-    if (!is_primary_key_index(this->index_cursor.mysql_index_no)) {
-      pk_key = this->share->toydb_table->extract_pk_key_from_secondary(
-          this->index_cursor.mysql_index_no,
-          *this->index_cursor.current_index_key);
-    } else {
-      pk_key = *this->index_cursor.current_index_key;
-    }
+    ToydbIndexKey pk_key = resolve_pk_key_from_cursor();
     return this->share->toydb_table->delete_row_by_key(pk_key);
   }
 
@@ -364,7 +357,6 @@ int ha_toydb::index_init(uint idx, bool) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
   this->index_cursor = ToydbIndexCursor{};
-  this->index_cursor.mysql_index_no = idx;
   this->scan_cursor.positioned = false;
   this->active_index = idx;
   return 0;
@@ -503,23 +495,6 @@ static const char *ha_rkey_function_name(enum ha_rkey_function flag) {
     default:
       return "HA_READ_INVALID";
   }
-}
-
-/**
- * @brief
- * セカンダリキーのPK部分以外がプレフィックスと一致するか判定（toydb_table.ccと同じ）
- *
- * UNIQUE判定時はPKを無視して判定したいため
- */
-static bool key_prefix_matches(const ToydbIndexKey &full_key,
-                               const ToydbIndexKey &prefix) {
-  if (full_key.key_parts.size() < prefix.key_parts.size()) return false;
-
-  for (size_t i = 0; i < prefix.key_parts.size(); i++) {
-    if (full_key.key_parts.at(i) != prefix.key_parts.at(i)) return false;
-  }
-
-  return true;
 }
 
 enum class ICP_MATCH_RESULT {
@@ -701,8 +676,10 @@ int ha_toydb::index_next(uchar *buf) {
   const auto &entries =
       toydb_table->get_secondary_index(this->active_index).entries;
   auto sec_iter = entries.find(*this->index_cursor.current_index_key);
+  if (sec_iter == entries.end()) return HA_ERR_KEY_NOT_FOUND;
+  ++sec_iter;
+
   while (sec_iter != entries.end()) {
-    ++sec_iter;
     ToydbIndexKey pk_key = toydb_table->extract_pk_key_from_secondary(
         this->active_index, *sec_iter);
     auto row_iter = toydb_table->find_row(pk_key);

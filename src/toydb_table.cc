@@ -391,13 +391,8 @@ ToydbIndexKey ToydbTable::extract_pk_key_from_secondary(
   return pk_key;
 }
 
-/**
- * @brief セカンダリキーのPK部分以外がプレフィックスと一致するか判定
- *
- * UNIQUE判定時はPKを無視して判定したいため
- */
-static bool key_prefix_matches(const ToydbIndexKey &full_key,
-                               const ToydbIndexKey &prefix) {
+bool key_prefix_matches(const ToydbIndexKey &full_key,
+                        const ToydbIndexKey &prefix) {
   if (full_key.key_parts.size() < prefix.key_parts.size()) return false;
 
   for (size_t i = 0; i < prefix.key_parts.size(); i++) {
@@ -414,22 +409,24 @@ int ToydbTable::insert_secondary_keys(
     const std::vector<SupportedDBValue> &row_data) {
   DBUG_PRINT("toydb", ("%s", __func__));
 
+  // まず全インデックスのユニーク制約を検証する
+  for (auto &[idx_no, sec_idx] : this->secondary_indexes) {
+    if (!sec_idx.is_unique) continue;
+
+    ToydbIndexKey key = build_secondary_key(idx_no, row_data);
+    ToydbIndexKey prefix;
+    for (size_t i = 0; i < sec_idx.user_key_parts_count; i++) {
+      prefix.key_parts.push_back(key.key_parts.at(i));
+    }
+    auto it = sec_idx.entries.lower_bound(prefix);
+    if (it != sec_idx.entries.end() && key_prefix_matches(*it, prefix)) {
+      return HA_ERR_FOUND_DUPP_KEY;
+    }
+  }
+
+  // 全てのユニーク制約を通過したら挿入する
   for (auto &[idx_no, sec_idx] : this->secondary_indexes) {
     ToydbIndexKey key = build_secondary_key(idx_no, row_data);
-
-    // UNIQUEの場合は重複チェック
-    if (sec_idx.is_unique) {
-      // ユーザー定義部分のみのプレフィックスキーを構築
-      ToydbIndexKey prefix;
-      for (size_t i = 0; i < sec_idx.user_key_parts_count; i++) {
-        prefix.key_parts.push_back(key.key_parts.at(i));
-      }
-      auto it = sec_idx.entries.lower_bound(prefix);
-      if (it != sec_idx.entries.end() && key_prefix_matches(*it, prefix)) {
-        return HA_ERR_FOUND_DUPP_KEY;
-      }
-    }
-
     sec_idx.entries.insert(std::move(key));
   }
   return 0;

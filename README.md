@@ -73,4 +73,25 @@ SELECT * FROM t2;
 CREATE TABLE t3 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, name VARCHAR(255), PRIMARY KEY (id)) ENGINE=TOYDB;
 INSERT INTO t3 (name) VALUES ('Alice');
 SELECT * FROM t3;
+
+CREATE TABLE t4 (id INT PRIMARY KEY, name VARCHAR(50) NOT NULL, age INT NOT NULL, KEY idx_age (age)) ENGINE=TOYDB;
+INSERT INTO t4 VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 30);
+
+CREATE TABLE t5 (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  last_name VARCHAR(20) NOT NULL,
+  first_name VARCHAR(20) NOT NULL,
+  PRIMARY KEY (id),
+  INDEX idx_name (last_name, first_name)
+) ENGINE=TOYDB;
+INSERT INTO t5 (last_name, first_name) VALUES ('Smith', 'John'), ('Doe', 'Jane'), ('Smith', 'Alice');
+
+SET SESSION cte_max_recursion_depth = 10000;
+INSERT INTO t3 (name)
+WITH RECURSIVE seq AS (
+  SELECT 1 AS n
+  UNION ALL
+  SELECT n + 1 FROM seq WHERE n < 10000
+)
+SELECT CONCAT('user_', n) FROM seq;
 ```

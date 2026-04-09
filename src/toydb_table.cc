@@ -108,7 +108,7 @@ void ToydbTable::update_auto_inc_value(ulonglong value) {
 /**
  * @brief 行データからインデックスキーを構築する
  */
-ToydbIndexKey ToydbTable::build_key_from_row(
+ToydbIndexKey ToydbTable::build_pk_key_from_row(
     const std::vector<SupportedDBValue> &row) const {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
@@ -192,7 +192,7 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
   ToydbIndexKey key;
   if (!this->pk_column_indices.empty()) {
     // PRIMARY KEYのカラム値をClustered Indexのキーとして使用する
-    key = build_key_from_row(row_data);
+    key = build_pk_key_from_row(row_data);
     if (this->rows.contains(key)) {
       return HA_ERR_FOUND_DUPP_KEY;
     }
@@ -201,6 +201,10 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
     ToydbRowId id = this->next_row_id++;
     key = ToydbIndexKey{{static_cast<int64>(id)}};
   }
+
+  // セカンダリインデックスにエントリを追加
+  int sec_ret = insert_secondary_keys(row_data);
+  if (sec_ret != 0) return sec_ret;
 
   ToydbRowId row_id = this->next_row_id++;
   ToydbRow row{row_id, std::move(row_data)};
@@ -248,6 +252,7 @@ int ToydbTable::update_row_by_key(const ToydbIndexKey &key,
                                   std::vector<SupportedDBValue> row_data) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
+
   auto it = this->rows.find(key);
   if (it == this->rows.end()) return HA_ERR_KEY_NOT_FOUND;
 
@@ -258,12 +263,27 @@ int ToydbTable::update_row_by_key(const ToydbIndexKey &key,
       return ER_INCORRECT_TYPE;
   }
 
+  // 旧セカンダリキーを削除 & 新セカンダリキーを挿入
+  const auto &old_values = it->second.values;
+  remove_secondary_keys(old_values);
+  int sec_ret = insert_secondary_keys(row_data);
+  if (sec_ret != 0) {
+    // エラー時は旧セカンダリキーを戻す
+    insert_secondary_keys(old_values);
+    return sec_ret;
+  }
+
   // PKカラムの値が変わった場合はキーを差し替える
   if (!pk_column_indices.empty()) {
-    ToydbIndexKey new_key = build_key_from_row(row_data);
+    ToydbIndexKey new_key = build_pk_key_from_row(row_data);
     if (!(new_key == key)) {
       // 新しいキーが既に存在する場合は重複エラー
-      if (this->rows.contains(new_key)) return HA_ERR_FOUND_DUPP_KEY;
+      if (this->rows.contains(new_key)) {
+        // セカンダリインデックスもロールバック
+        remove_secondary_keys(row_data);
+        insert_secondary_keys(old_values);
+        return HA_ERR_FOUND_DUPP_KEY;
+      }
       ToydbRow row{it->second.id, std::move(row_data)};
       this->rows.erase(it);
       this->rows.emplace(std::move(new_key), std::move(row));
@@ -280,6 +300,7 @@ int ToydbTable::delete_row_by_key(const ToydbIndexKey &key) {
   DBUG_PRINT("toydb", ("%s", __func__));
   auto it = this->rows.find(key);
   if (it == this->rows.end()) return HA_ERR_KEY_NOT_FOUND;
+  remove_secondary_keys(it->second.values);
   this->rows.erase(it);
   return 0;
 }
@@ -308,7 +329,130 @@ const std::vector<ToydbColumn> &ToydbTable::get_columns() const {
 void ToydbTable::clear_rows() {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
+
+  // Clustered Indexとセカンダリインデックスの両方を全削除する
   this->rows.clear();
+  for (auto &[idx_no, sec_idx] : this->secondary_indexes) {
+    sec_idx.entries.clear();
+  }
+}
+
+void ToydbTable::add_secondary_index(uint mysql_index_no, std::string name,
+                                     std::vector<uint> col_indices,
+                                     bool is_unique) {
+  DBUG_PRINT("toydb", ("%s index_no=%u name=%s is_unique=%d", __func__,
+                       mysql_index_no, name.c_str(), is_unique));
+
+  ToydbSecondaryIndex idx;
+  idx.name = std::move(name);
+  idx.column_indices = std::move(col_indices);
+  idx.user_key_parts_count = idx.column_indices.size();
+  idx.is_unique = is_unique;
+  this->secondary_indexes.emplace(mysql_index_no, std::move(idx));
+}
+
+/**
+ * @brief 行データからセカンダリインデックスキーを構築する
+ */
+ToydbIndexKey ToydbTable::build_secondary_key(
+    uint mysql_index_no, const std::vector<SupportedDBValue> &row_data) const {
+  DBUG_PRINT("toydb", ("%s", __func__));
+
+  const ToydbSecondaryIndex &sec_idx =
+      this->secondary_indexes.at(mysql_index_no);
+
+  ToydbIndexKey key;
+  for (uint col_idx : sec_idx.column_indices) {
+    key.key_parts.push_back(row_data.at(col_idx));
+  }
+  // セカンダリキーの後ろにはPKをくっつける（非ユニークセカンダリインデックスにてキーがかぶるため）
+  for (uint pk_idx : this->pk_column_indices) {
+    key.key_parts.push_back(row_data.at(pk_idx));
+  }
+  return key;
+}
+
+/**
+ * @brief セカンダリインデックスのキーからPK部分を抽出する
+ */
+ToydbIndexKey ToydbTable::extract_pk_key_from_secondary(
+    uint mysql_index_no, const ToydbIndexKey &sec_key) const {
+  DBUG_PRINT("toydb", ("%s", __func__));
+
+  const ToydbSecondaryIndex &sec_idx =
+      this->secondary_indexes.at(mysql_index_no);
+
+  // PKはセカンダリキーの最後にくっついているので、セカンダリキーだけをスキップしてPK部分だけ抜き取る
+  ToydbIndexKey pk_key;
+  for (size_t i = sec_idx.user_key_parts_count; i < sec_key.key_parts.size();
+       i++) {
+    pk_key.key_parts.push_back(sec_key.key_parts.at(i));
+  }
+  return pk_key;
+}
+
+/**
+ * @brief セカンダリキーのPK部分以外がプレフィックスと一致するか判定
+ *
+ * UNIQUE判定時はPKを無視して判定したいため
+ */
+static bool key_prefix_matches(const ToydbIndexKey &full_key,
+                               const ToydbIndexKey &prefix) {
+  if (full_key.key_parts.size() < prefix.key_parts.size()) return false;
+
+  for (size_t i = 0; i < prefix.key_parts.size(); i++) {
+    if (full_key.key_parts.at(i) != prefix.key_parts.at(i)) return false;
+  }
+
+  return true;
+}
+
+/**
+ * @brief 行の挿入時にセカンダリインデックスにエントリを追加する
+ */
+int ToydbTable::insert_secondary_keys(
+    const std::vector<SupportedDBValue> &row_data) {
+  DBUG_PRINT("toydb", ("%s", __func__));
+
+  for (auto &[idx_no, sec_idx] : this->secondary_indexes) {
+    ToydbIndexKey key = build_secondary_key(idx_no, row_data);
+
+    // UNIQUEの場合は重複チェック
+    if (sec_idx.is_unique) {
+      // ユーザー定義部分のみのプレフィックスキーを構築
+      ToydbIndexKey prefix;
+      for (size_t i = 0; i < sec_idx.user_key_parts_count; i++) {
+        prefix.key_parts.push_back(key.key_parts.at(i));
+      }
+      auto it = sec_idx.entries.lower_bound(prefix);
+      if (it != sec_idx.entries.end() && key_prefix_matches(*it, prefix)) {
+        return HA_ERR_FOUND_DUPP_KEY;
+      }
+    }
+
+    sec_idx.entries.insert(std::move(key));
+  }
+  return 0;
+}
+
+int ToydbTable::remove_secondary_keys(
+    const std::vector<SupportedDBValue> &row_data) {
+  DBUG_PRINT("toydb", ("%s", __func__));
+
+  for (auto &[idx_no, sec_idx] : this->secondary_indexes) {
+    ToydbIndexKey key = build_secondary_key(idx_no, row_data);
+    sec_idx.entries.erase(key);
+  }
+  return 0;
+}
+
+bool ToydbTable::has_secondary_index(uint mysql_index_no) const {
+  return this->secondary_indexes.contains(mysql_index_no);
+}
+
+const ToydbSecondaryIndex &ToydbTable::get_secondary_index(
+    uint mysql_index_no) const {
+  return this->secondary_indexes.at(mysql_index_no);
 }
 
 void ToydbTable::print_all() const {

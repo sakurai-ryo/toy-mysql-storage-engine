@@ -68,7 +68,8 @@ struct ToydbIndexCursor {
   bool positioned{false};
   // 利用するインデックスの番号
   uint mysql_index_no{MAX_KEY};
-  // 現在指しているClustered Indexのキー
+  // PKスキャン時: Clustered Indexのキー
+  // セカンダリスキャン時: セカンダリ複合キー（PKサフィックス含む）
   std::optional<ToydbIndexKey> current_index_key;
 };
 
@@ -115,9 +116,12 @@ class ha_toydb : public handler {
    * @brief サポートするIndexの機能を返す
    *
    * 一旦完全一致と前方一致だけサポート
+   *
+   * ICPも追加でサポート
    */
   ulong index_flags(uint, uint, bool) const override {
-    return HA_READ_NEXT | HA_READ_PREV | HA_READ_ORDER;
+    return HA_READ_NEXT | HA_READ_PREV | HA_READ_ORDER |
+           HA_DO_INDEX_COND_PUSHDOWN;
   }
 
   uint max_supported_record_length() const override {
@@ -157,6 +161,8 @@ class ha_toydb : public handler {
   int update_row(const uchar *old_data, uchar *new_data) override;
 
   int delete_row(const uchar *buf) override;
+
+  Item *idx_cond_push(uint keyno, Item *idx_cond) override;
 
   int index_init(uint idx, bool sorted) override;
   int index_end() override;
@@ -200,6 +206,7 @@ class ha_toydb : public handler {
       enum thr_lock_type lock_type) override;  ///< required
 
  private:
+  bool is_primary_key_index(uint idx) const;
   int read_row_from_fields(std::vector<SupportedDBValue> &row_data);
   int decode_index_key(const uchar *key, uint key_len, ToydbIndexKey &out_key);
 

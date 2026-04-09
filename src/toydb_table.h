@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "absl/container/btree_map.h"
+#include "absl/container/btree_set.h"
 #include "field_types.h"
 #include "my_inttypes.h"
 
@@ -80,6 +81,23 @@ struct ToydbColumn {
 };
 
 /**
+ * @brief セカンダリインデックス
+ *
+ * InnoDBの実装をまねて、セカンダリインデックスのキーにPKカラムの値をサフィックスとしてくっつける
+ * こうしないとnon-uniqueなセカンダリインデックスのキーが重複しちゃうため
+ */
+struct ToydbSecondaryIndex {
+  std::string name;
+  std::vector<uint> column_indices;  // ユーザー定義のインデックスカラム番号
+  size_t user_key_parts_count;       // ユーザー定義のキーパート数
+  bool is_unique;
+
+  // セカンダリインデックスの実データ
+  // sec_key + PK suffix
+  absl::btree_set<ToydbIndexKey> entries;
+};
+
+/**
  * @brief テーブルの定義と実データ
  */
 class ToydbTable final {
@@ -97,8 +115,12 @@ class ToydbTable final {
 
   absl::btree_map<ToydbIndexKey, ToydbRow> rows;
 
+  // MySQLインデックス番号とセカンダリインデックス定義の紐付け
+  std::map<uint, ToydbSecondaryIndex> secondary_indexes;
+
  public:
   using RowIterator = absl::btree_map<ToydbIndexKey, ToydbRow>::const_iterator;
+  using SecondaryIndexIterator = absl::btree_set<ToydbIndexKey>::const_iterator;
 
   explicit ToydbTable(std::string name);
 
@@ -106,7 +128,7 @@ class ToydbTable final {
   ulonglong get_next_auto_inc_value() const;
   void set_auto_inc_value(ulonglong value);
   void update_auto_inc_value(ulonglong value);
-  ToydbIndexKey build_key_from_row(
+  ToydbIndexKey build_pk_key_from_row(
       const std::vector<SupportedDBValue> &row) const;
 
   int add_column(const std::string &name, enum_field_types type);
@@ -128,6 +150,18 @@ class ToydbTable final {
   RowIterator find_row(const ToydbIndexKey &key) const;
   RowIterator lower_bound_row(const ToydbIndexKey &key) const;
   RowIterator upper_bound_row(const ToydbIndexKey &key) const;
+
+  // セカンダリインデックス操作
+  void add_secondary_index(uint mysql_index_no, std::string name,
+                           std::vector<uint> col_indices, bool is_unique);
+  ToydbIndexKey build_secondary_key(
+      uint mysql_index_no, const std::vector<SupportedDBValue> &row_data) const;
+  ToydbIndexKey extract_pk_key_from_secondary(
+      uint mysql_index_no, const ToydbIndexKey &sec_key) const;
+  int insert_secondary_keys(const std::vector<SupportedDBValue> &row_data);
+  int remove_secondary_keys(const std::vector<SupportedDBValue> &row_data);
+  bool has_secondary_index(uint mysql_index_no) const;
+  const ToydbSecondaryIndex &get_secondary_index(uint mysql_index_no) const;
 };
 
 /**

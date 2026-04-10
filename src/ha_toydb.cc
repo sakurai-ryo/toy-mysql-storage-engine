@@ -221,7 +221,7 @@ int ha_toydb::read_row_from_fields(std::vector<SupportedDBValue> &row_data) {
       case MYSQL_TYPE_LONG:
       case MYSQL_TYPE_LONGLONG: {
         // MySQLの整数型は全てint64_tで扱うことにする
-        int64 val = (*field)->val_int();
+        const int64 val = (*field)->val_int();
         row_data.emplace_back(val);
         break;
       }
@@ -271,7 +271,7 @@ int ha_toydb::write_row(uchar *buf) {
 
     // 挿入成功時にAUTO_INCREMENTカウンタを更新する
     if (ret == 0 && this->table->next_number_field != nullptr) {
-      ulonglong auto_inc_val =
+      const ulonglong auto_inc_val =
           static_cast<ulonglong>(this->table->next_number_field->val_int());
       this->share->toydb_table->update_auto_inc_value(auto_inc_val);
     }
@@ -297,7 +297,7 @@ int ha_toydb::update_row(const uchar *, uchar *) {
     if (this->index_cursor.positioned &&
         this->index_cursor.current_index_key.has_value()) {
       // インデックススキャン中はキーベースで更新する
-      ToydbIndexKey pk_key = resolve_pk_key_from_cursor();
+      const ToydbIndexKey pk_key = resolve_pk_key_from_cursor();
       ret = this->share->toydb_table->update_row_by_key(pk_key,
                                                         std::move(row_data));
     } else {
@@ -322,7 +322,7 @@ int ha_toydb::delete_row(const uchar *) {
   if (this->index_cursor.positioned &&
       this->index_cursor.current_index_key.has_value()) {
     // インデックススキャン中はキーベースで削除する
-    ToydbIndexKey pk_key = resolve_pk_key_from_cursor();
+    const ToydbIndexKey pk_key = resolve_pk_key_from_cursor();
     return this->share->toydb_table->delete_row_by_key(pk_key);
   }
 
@@ -523,7 +523,7 @@ int ha_toydb::index_read(uchar *buf, const uchar *key, uint key_len,
   if (ret != 0) return ret;
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  auto *toydb_table = this->share->toydb_table;
+  const auto *toydb_table = this->share->toydb_table;
 
   if (is_primary_key_index(this->active_index)) {
     // --- Clustered Index検索 ---
@@ -618,7 +618,7 @@ int ha_toydb::index_read(uchar *buf, const uchar *key, uint key_len,
 
   // セカンダリキーからPKを抽出してClustered Indexから行データを取得
   while (sec_iter != entries.end()) {
-    ToydbIndexKey pk_key =
+    const ToydbIndexKey pk_key =
         toydb_table->extract_pk_key_from_secondary(active_index, *sec_iter);
     auto row_iter = toydb_table->find_row(pk_key);
     if (row_iter == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
@@ -651,7 +651,7 @@ int ha_toydb::index_next(uchar *buf) {
     return HA_ERR_END_OF_FILE;
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  auto *toydb_table = this->share->toydb_table;
+  const auto *toydb_table = this->share->toydb_table;
 
   if (is_primary_key_index(this->active_index)) {
     auto iter = toydb_table->find_row(*this->index_cursor.current_index_key);
@@ -680,7 +680,7 @@ int ha_toydb::index_next(uchar *buf) {
   ++sec_iter;
 
   while (sec_iter != entries.end()) {
-    ToydbIndexKey pk_key = toydb_table->extract_pk_key_from_secondary(
+    const ToydbIndexKey pk_key = toydb_table->extract_pk_key_from_secondary(
         this->active_index, *sec_iter);
     auto row_iter = toydb_table->find_row(pk_key);
     if (row_iter == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
@@ -710,7 +710,7 @@ int ha_toydb::index_prev(uchar *buf) {
     return HA_ERR_END_OF_FILE;
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  auto *toydb_table = this->share->toydb_table;
+  const auto *toydb_table = this->share->toydb_table;
 
   if (is_primary_key_index(this->active_index)) {
     auto iter = toydb_table->find_row(*this->index_cursor.current_index_key);
@@ -739,7 +739,7 @@ int ha_toydb::index_prev(uchar *buf) {
 
   while (sec_iter != entries.begin()) {
     --sec_iter;
-    ToydbIndexKey pk_key = toydb_table->extract_pk_key_from_secondary(
+    const ToydbIndexKey pk_key = toydb_table->extract_pk_key_from_secondary(
         this->active_index, *sec_iter);
     auto row_iter = toydb_table->find_row(pk_key);
     if (row_iter == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
@@ -764,7 +764,7 @@ int ha_toydb::index_first(uchar *buf) {
   DBUG_PRINT("toydb", ("%s", __func__));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  auto *toydb_table = this->share->toydb_table;
+  const auto *toydb_table = this->share->toydb_table;
 
   if (is_primary_key_index(this->active_index)) {
     for (auto iter = toydb_table->rows_begin(); iter != toydb_table->rows_end();
@@ -786,7 +786,7 @@ int ha_toydb::index_first(uchar *buf) {
   const auto &entries =
       toydb_table->get_secondary_index(this->active_index).entries;
   for (auto sec_iter = entries.begin(); sec_iter != entries.end(); ++sec_iter) {
-    ToydbIndexKey pk_key = toydb_table->extract_pk_key_from_secondary(
+    const ToydbIndexKey pk_key = toydb_table->extract_pk_key_from_secondary(
         this->active_index, *sec_iter);
     auto row_iter = toydb_table->find_row(pk_key);
     if (row_iter == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
@@ -812,7 +812,7 @@ int ha_toydb::index_last(uchar *buf) {
   DBUG_PRINT("toydb", ("%s", __func__));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  auto *toydb_table = this->share->toydb_table;
+  const auto *toydb_table = this->share->toydb_table;
 
   if (is_primary_key_index(active_index)) {
     if (toydb_table->row_count() == 0) return HA_ERR_END_OF_FILE;
@@ -840,7 +840,7 @@ int ha_toydb::index_last(uchar *buf) {
   auto sec_iter = entries.end();
   while (true) {
     --sec_iter;
-    ToydbIndexKey pk_key =
+    const ToydbIndexKey pk_key =
         toydb_table->extract_pk_key_from_secondary(active_index, *sec_iter);
     auto row_iter = toydb_table->find_row(pk_key);
     if (row_iter == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
@@ -885,7 +885,7 @@ int ha_toydb::rnd_next(uchar *buf) {
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  auto *toydb_table = this->share->toydb_table;
+  const auto *toydb_table = this->share->toydb_table;
 
   if (this->scan_cursor.current_pos >= toydb_table->row_count())
     return HA_ERR_END_OF_FILE;
@@ -916,9 +916,9 @@ int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
   // refから行位置を復元する
-  size_t row_index = my_get_ptr(pos, this->ref_length);
+  const size_t row_index = my_get_ptr(pos, this->ref_length);
 
-  auto *toydb_table = this->share->toydb_table;
+  const auto *toydb_table = this->share->toydb_table;
 
   if (row_index >= toydb_table->row_count()) return HA_ERR_KEY_NOT_FOUND;
 
@@ -1009,9 +1009,9 @@ int ha_toydb::delete_table(const char *name, const dd::Table *) {
   DBUG_PRINT("toydb", ("%s", __func__));
 
   // nameはパス形式（例:"./db/table"）なので、最後の'/'以降をテーブル名として取得する
-  std::string_view path(name);
-  auto pos = path.find_last_of('/');
-  std::string_view table_name =
+  const std::string_view path(name);
+  const auto pos = path.find_last_of('/');
+  const std::string_view table_name =
       (pos != std::string_view::npos) ? path.substr(pos + 1) : path;
 
   toydb_tables->tables.erase(std::string(table_name));
@@ -1055,7 +1055,7 @@ ha_rows ha_toydb::records_in_range(uint index_num, key_range *min_key,
     return HA_POS_ERROR;
   }
 
-  ToydbTable *toydb_table = this->share->toydb_table;
+  const ToydbTable *toydb_table = this->share->toydb_table;
 
   if (is_primary_key_index(index_num)) {
     auto start = min_key->flag == HA_READ_AFTER_KEY
@@ -1064,7 +1064,7 @@ ha_rows ha_toydb::records_in_range(uint index_num, key_range *min_key,
     auto end = max_key->flag == HA_READ_BEFORE_KEY
                    ? toydb_table->lower_bound_row(max_index_key)
                    : toydb_table->upper_bound_row(max_index_key);
-    ha_rows n_rows = std::max(0L, std::distance(start, end));
+    const ha_rows n_rows = std::max(0L, std::distance(start, end));
     return n_rows > 0 ? n_rows : 1;
   }
 
@@ -1085,7 +1085,7 @@ int ha_toydb::create(const char *, TABLE *table_info,
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
 
-  const char *table_name = table_info->s->table_name.str;
+  const char *const table_name = table_info->s->table_name.str;
 
   // HTON_CAN_RECREATEにより、TRUNCATE時はdelete_tableを経由せず直接create()が呼ばれる
   // なのでその場合は既存テーブルを削除して再作成する
@@ -1124,7 +1124,7 @@ int ha_toydb::create(const char *, TABLE *table_info,
     for (uint j = 0; j < key->user_defined_key_parts; j++) {
       col_indices.push_back(key->key_part[j].fieldnr - 1);
     }
-    bool is_unique = (key->flags & HA_NOSAME) != 0;
+    const bool is_unique = (key->flags & HA_NOSAME) != 0;
     new_table.add_secondary_index(i, key->name, std::move(col_indices),
                                   is_unique);
   }

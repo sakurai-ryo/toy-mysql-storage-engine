@@ -9,4 +9,7 @@
     "C_Cpp.clang_format_style": "file",
     "C_Cpp.codeAnalysis.clangTidy.enabled": true,
     "nix.enableLanguageServer": true,
+    "cSpell.words": [
+        "Toydb"
+    ]
 }

@@ -7,12 +7,12 @@ DROP TABLE IF EXISTS t1;
 --enable_warnings
 
 # CREATE TABLE and INSERT
-CREATE TABLE t1 (id INT NOT NULL, name VARCHAR(50) NOT NULL) ENGINE=TOYDB;
+CREATE TABLE t1 (id INT NOT NULL AUTO_INCREMENT, name VARCHAR(50) NOT NULL, PRIMARY KEY (id)) ENGINE=TOYDB;
 SHOW CREATE TABLE t1;
 
-INSERT INTO t1 VALUES (1, 'Alice');
-INSERT INTO t1 VALUES (2, 'Bob');
-INSERT INTO t1 VALUES (3, 'Charlie');
+INSERT INTO t1 (name) VALUES ('Alice');
+INSERT INTO t1 (name) VALUES ('Bob');
+INSERT INTO t1 (name) VALUES ('Charlie');
 
 SELECT * FROM t1;
 
@@ -29,8 +29,8 @@ DELETE FROM t1;
 SELECT * FROM t1;
 
 # Re-insert after delete all
-INSERT INTO t1 VALUES (10, 'Dave');
-INSERT INTO t1 VALUES (20, 'Eve');
+INSERT INTO t1 (name) VALUES ('Dave');
+INSERT INTO t1 (name) VALUES ('Eve');
 SELECT * FROM t1;
 
 # TRUNCATE (uses HTON_CAN_RECREATE: delete_table + create)
@@ -38,12 +38,12 @@ TRUNCATE TABLE t1;
 SELECT * FROM t1;
 
 # Re-insert after truncate
-INSERT INTO t1 VALUES (100, 'Frank');
+INSERT INTO t1 (name) VALUES ('Frank');
 SELECT * FROM t1;
 
 # Multiple column update
-INSERT INTO t1 VALUES (200, 'Grace');
-UPDATE t1 SET id = 101, name = 'Frank_v2' WHERE id = 100;
+INSERT INTO t1 (name) VALUES ('Grace');
+UPDATE t1 SET id = 101, name = 'Frank_v2' WHERE id = 1;
 SELECT * FROM t1;
 
 # DROP TABLE

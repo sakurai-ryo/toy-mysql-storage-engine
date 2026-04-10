@@ -104,12 +104,6 @@ class ha_toydb : public handler {
     return key_alg == HA_KEY_ALG_BTREE;
   }
 
-  /** @brief
-    This is a list of flags that indicate what functionality the storage engine
-    implements. The current table flags are documented in handler.h
-  */
-  ulonglong table_flags() const override { return HA_BINLOG_STMT_CAPABLE; }
-
   /**
    * @brief サポートするIndexの機能を返す
    *
@@ -149,50 +143,16 @@ class ha_toydb : public handler {
     return (static_cast<double>(rows) / 20.0) + 1;
   }
 
-  int open(const char *name, int mode, uint test_if_locked,
-           const dd::Table *table_def) override;  // required
-
-  int close(void) override;  // required
-
-  int write_row(uchar *buf) override;
-
-  int update_row(const uchar *old_data, uchar *new_data) override;
-
-  int delete_row(const uchar *buf) override;
+  int create(const char *, TABLE *table_info, HA_CREATE_INFO *create_info,
+             dd::Table *) override;  ///< required
 
   Item *idx_cond_push(uint keyno, Item *idx_cond) override;
 
-  int index_init(uint idx, bool sorted) override;
-  int index_end() override;
-
-  int index_read(uchar *buf, const uchar *key, uint key_len,
-                 enum ha_rkey_function find_flag) override;
-
-  int index_next(uchar *buf) override;
-
-  int index_prev(uchar *buf) override;
-
-  int index_first(uchar *buf) override;
-
-  int index_last(uchar *buf) override;
-
-  int rnd_init(bool scan) override;  // required
-  int rnd_end() override;
-  int rnd_next(uchar *buf) override;             ///< required
-  int rnd_pos(uchar *buf, uchar *pos) override;  ///< required
-  void position(const uchar *record) override;   ///< required
-  int info(uint) override;                       ///< required
-  int extra(enum ha_extra_function operation) override;
-  int external_lock(THD *thd, int lock_type) override;  ///< required
+  void position(const uchar *record) override;  ///< required
+  int info(uint) override;                      ///< required
   int delete_all_rows(void) override;
-  ha_rows records_in_range(uint inx, key_range *min_key,
+  ha_rows records_in_range(uint index_num, key_range *min_key,
                            key_range *max_key) override;
-  int delete_table(const char *name, const dd::Table *) override;
-  int rename_table(const char *from, const char *to,
-                   const dd::Table *from_table_def,
-                   dd::Table *to_table_def) override;
-  int create(const char *, TABLE *, HA_CREATE_INFO *table_info,
-             dd::Table *) override;  ///< required
 
   // 呼び出し元のwrite_row()で既にdata_mutexを取得済みの前提
   void get_auto_increment(ulonglong offset, ulonglong increment,
@@ -203,7 +163,47 @@ class ha_toydb : public handler {
       THD *thd, THR_LOCK_DATA **to,
       enum thr_lock_type lock_type) override;  ///< required
 
+ protected:
+  int delete_table(const char *name, const dd::Table *) override;
+  int rename_table(const char *from, const char *to,
+                   const dd::Table *from_table_def,
+                   dd::Table *to_table_def) override;
+
+  int index_read(uchar *buf, const uchar *key, uint key_len,
+                 enum ha_rkey_function find_flag) override;
+  int index_next(uchar *buf) override;
+  int index_prev(uchar *buf) override;
+  int index_first(uchar *buf) override;
+  int index_last(uchar *buf) override;
+
+  int rnd_next(uchar *buf) override;             ///< required
+  int rnd_pos(uchar *buf, uchar *pos) override;  ///< required
+
  private:
+  /** @brief Storage Engineがサポートする機能のフラグ
+   *
+   * handler.hに一覧がある
+   */
+  ulonglong table_flags() const override { return HA_BINLOG_STMT_CAPABLE; }
+
+  int open(const char *name, int mode, uint test_if_locked,
+           const dd::Table *table_def) override;  // required
+  int close(void) override;                       // required
+
+  int write_row(uchar *buf) override;
+  int update_row(const uchar *old_data, uchar *new_data) override;
+  int delete_row(const uchar *buf) override;
+
+  int index_init(uint idx, bool sorted) override;
+  int index_end() override;
+
+  int rnd_init(bool scan) override;  // required
+  int rnd_end() override;
+
+  int extra(enum ha_extra_function operation) override;
+
+  int external_lock(THD *thd, int lock_type) override;  ///< required
+
   bool is_primary_key_index(uint idx) const;
   ToydbIndexKey resolve_pk_key_from_cursor() const;
   int read_row_from_fields(std::vector<SupportedDBValue> &row_data);

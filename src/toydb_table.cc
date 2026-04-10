@@ -198,7 +198,7 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
     }
   } else {
     // PKがない場合は内部のrow_idをキーとして使用する
-    ToydbRowId id = this->next_row_id++;
+    const ToydbRowId id = this->next_row_id++;
     key = ToydbIndexKey{{static_cast<int64>(id)}};
   }
 
@@ -206,7 +206,7 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
   int sec_ret = insert_secondary_keys(row_data);
   if (sec_ret != 0) return sec_ret;
 
-  ToydbRowId row_id = this->next_row_id++;
+  const ToydbRowId row_id = this->next_row_id++;
   ToydbRow row{row_id, std::move(row_data)};
   this->rows.emplace(std::move(key), std::move(row));
   return 0;

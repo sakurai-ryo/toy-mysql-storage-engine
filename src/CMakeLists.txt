@@ -38,3 +38,5 @@ ELSEIF(NOT WITHOUT_TOYDB_STORAGE_ENGINE)
     LINK_LIBRARIES ext::zlib extra::rapidjson absl::btree
     )
 ENDIF()
+
+TARGET_COMPILE_FEATURES(toydb PUBLIC cxx_std_23)

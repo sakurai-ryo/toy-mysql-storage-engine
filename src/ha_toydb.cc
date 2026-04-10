@@ -23,6 +23,7 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 #include "ha_toydb.h"
+#include "toydb_table.h"
 
 #include <algorithm>
 #include <cassert>
@@ -210,8 +211,7 @@ int ha_toydb::read_row_from_fields(std::vector<SupportedDBValue> &row_data) {
 
   for (Field **field = this->table->field; *field != nullptr; field++) {
     if ((*field)->is_null()) {
-      my_error(ER_BAD_NULL_ERROR, MYF(0), (*field)->field_name);
-      ret = ER_BAD_NULL_ERROR;
+      row_data.emplace_back(std::monostate{});
       break;
     }
 
@@ -234,7 +234,7 @@ int ha_toydb::read_row_from_fields(std::vector<SupportedDBValue> &row_data) {
         break;
       }
       default:
-        DBUG_PRINT("error", ("Unsupported field type: %d", (*field)->type()));
+        DBUG_PRINT("toydb", ("Unsupported field type: %d", (*field)->type()));
         ret = HA_ERR_UNSUPPORTED;
         break;
     }
@@ -396,7 +396,7 @@ int ha_toydb::decode_index_key(const uchar *key, uint key_len,
     Field *field = key_info->key_part[i].field;
 
     if (field->is_null()) {
-      ret = HA_ERR_UNSUPPORTED;
+      out_key.key_parts.emplace_back(std::monostate{});
       break;
     }
 
@@ -452,7 +452,7 @@ static int store_row_to_buf(TABLE *table, uchar *buf,
             field->store(val.c_str(), val.length(), system_charset_info);
           }
         },
-        row[i]);
+        row.at(i));
   }
 
   dbug_tmp_restore_column_map(table->write_set, old_map);
@@ -1096,9 +1096,17 @@ int ha_toydb::create(const char *, TABLE *table_info,
   ToydbTable new_table(table_name);
 
   for (Field **f = table_info->field; *f != nullptr; f++) {
-    DBUG_PRINT("field",
-               ("Field: name=%s, type=%d", (*f)->field_name, (*f)->type()));
-    int ret = new_table.add_column((*f)->field_name, (*f)->type());
+    DBUG_PRINT("toydb", ("Field: name=%s, type=%d is_null=%d is_unsigned=%d",
+                         (*f)->field_name, (*f)->type(), (*f)->is_null(),
+                         (*f)->is_unsigned()));
+    ColumnFlag flags = ColumnFlag::NONE;
+    if (!(*f)->is_null()) {
+      flags |= ColumnFlag::NOT_NULL;
+    }
+    if ((*f)->is_unsigned()) {
+      flags |= ColumnFlag::UNSIGNED;
+    }
+    int ret = new_table.add_column((*f)->field_name, (*f)->type(), flags);
     if (ret != 0) return ret;
   }
 

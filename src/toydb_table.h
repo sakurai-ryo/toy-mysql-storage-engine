@@ -40,9 +40,9 @@
 /**
  * @brief サポートするデータ型
  *
- * Nullableは一旦サポート外
+ * `std::monostate`はNULL値を表す
  */
-using SupportedDBValue = std::variant<int64, std::string>;
+using SupportedDBValue = std::variant<int64, std::string, std::monostate>;
 
 /**
  * @brief 各行を一意に参照するためのId
@@ -73,11 +73,40 @@ struct ToydbIndexKey {
 };
 
 /**
+ * @brief カラムの状態を表すフラグ
+ *
+ * 参考: mysql-server/storage/innobase/include/data0type.h
+ *
+ * enum classでビット演算をするためにオーバーロードしてる
+ */
+enum class ColumnFlag : uint16_t {
+  NONE = 0,
+  NOT_NULL = 256,
+  UNSIGNED = 512,
+};
+constexpr ColumnFlag operator|(ColumnFlag a, ColumnFlag b) {
+  return static_cast<ColumnFlag>(
+      static_cast<uint16_t>(std::to_underlying(a) | std::to_underlying(b)));
+}
+constexpr ColumnFlag operator&(ColumnFlag a, ColumnFlag b) {
+  return static_cast<ColumnFlag>(
+      static_cast<uint16_t>(std::to_underlying(a) & std::to_underlying(b)));
+}
+constexpr ColumnFlag &operator|=(ColumnFlag &a, ColumnFlag b) {
+  return a = a | b;
+}
+constexpr bool has_flag(ColumnFlag flags, ColumnFlag test) {
+  return (flags & test) != ColumnFlag::NONE;
+}
+
+/**
  * @brief テーブルのカラム
  */
 struct ToydbColumn {
   std::string name;
   enum_field_types type;
+
+  ColumnFlag flags{ColumnFlag::NONE};
 };
 
 /**
@@ -131,7 +160,8 @@ class ToydbTable final {
   ToydbIndexKey build_pk_key_from_row(
       const std::vector<SupportedDBValue> &row) const;
 
-  int add_column(const std::string &name, enum_field_types type);
+  int add_column(const std::string &name, enum_field_types type,
+                 ColumnFlag flags);
   int insert_row(std::vector<SupportedDBValue> row_data);
   int update_row(size_t row_index, std::vector<SupportedDBValue> row_data);
   int delete_row(size_t row_index);

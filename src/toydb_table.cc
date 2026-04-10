@@ -38,16 +38,26 @@
 #include "my_inttypes.h"
 #include "mysqld_error.h"
 
-static bool check_type_match(enum_field_types expected,
+static bool check_type_match(enum_field_types expected, ColumnFlag flags,
                              const SupportedDBValue &value) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
+
+  if (std::holds_alternative<std::monostate>(value)) {
+    return has_flag(flags, ColumnFlag::NOT_NULL);
+  }
+
   switch (expected) {
     case enum_field_types::MYSQL_TYPE_TINY:
     case enum_field_types::MYSQL_TYPE_SHORT:
     case enum_field_types::MYSQL_TYPE_LONG:
     case enum_field_types::MYSQL_TYPE_LONGLONG:
-      return std::holds_alternative<int64>(value);
+      if (has_flag(flags, ColumnFlag::UNSIGNED)) {
+        return std::holds_alternative<int64>(value) &&
+               std::get<int64>(value) >= 0;
+      } else {
+        return std::holds_alternative<int64>(value);
+      }
     case enum_field_types::MYSQL_TYPE_VAR_STRING:
     case enum_field_types::MYSQL_TYPE_VARCHAR:
     case enum_field_types::MYSQL_TYPE_STRING:
@@ -60,6 +70,7 @@ static bool check_type_match(enum_field_types expected,
 static bool check_supported_type(enum_field_types type) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
+
   switch (type) {
     case enum_field_types::MYSQL_TYPE_TINY:
     case enum_field_types::MYSQL_TYPE_SHORT:
@@ -161,7 +172,8 @@ ToydbTable::RowIterator ToydbTable::upper_bound_row(
   return this->rows.upper_bound(key);
 }
 
-int ToydbTable::add_column(const std::string &name, enum_field_types type) {
+int ToydbTable::add_column(const std::string &name, enum_field_types type,
+                           ColumnFlag flags) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
   if (!this->rows.empty()) {
@@ -172,7 +184,7 @@ int ToydbTable::add_column(const std::string &name, enum_field_types type) {
     return HA_ERR_UNSUPPORTED;
   }
 
-  this->columns.push_back({name, type});
+  this->columns.push_back({name, type, flags});
   return 0;
 }
 
@@ -184,7 +196,8 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
   }
 
   for (size_t i = 0; i < this->columns.size(); ++i) {
-    if (!check_type_match(this->columns.at(i).type, row_data.at(i))) {
+    const auto &col = this->columns.at(i);
+    if (!check_type_match(col.type, col.flags, row_data.at(i))) {
       return ER_INCORRECT_TYPE;
     }
   }
@@ -225,7 +238,8 @@ int ToydbTable::update_row(size_t row_index,
   }
 
   for (size_t i = 0; i < this->columns.size(); ++i) {
-    if (!check_type_match(this->columns.at(i).type, row_data.at(i))) {
+    const auto &col = this->columns.at(i);
+    if (!check_type_match(col.type, col.flags, row_data.at(i))) {
       return ER_INCORRECT_TYPE;
     }
   }
@@ -259,7 +273,8 @@ int ToydbTable::update_row_by_key(const ToydbIndexKey &key,
   if (row_data.size() != this->columns.size()) return ER_WRONG_VALUE_COUNT;
 
   for (size_t i = 0; i < this->columns.size(); ++i) {
-    if (!check_type_match(this->columns.at(i).type, row_data.at(i)))
+    const auto &col = this->columns.at(i);
+    if (!check_type_match(col.type, col.flags, row_data.at(i)))
       return ER_INCORRECT_TYPE;
   }
 
@@ -450,22 +465,4 @@ bool ToydbTable::has_secondary_index(uint mysql_index_no) const {
 const ToydbSecondaryIndex &ToydbTable::get_secondary_index(
     uint mysql_index_no) const {
   return this->secondary_indexes.at(mysql_index_no);
-}
-
-void ToydbTable::print_all() const {
-  // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
-  std::cout << "--- Table: " << this->table_name << " ---\n";
-
-  for (const auto &col : this->columns) {
-    std::cout << col.name << "\t| ";
-  }
-  std::cout << "\n----------------------------------\n";
-
-  for (const auto &[key, row] : this->rows) {
-    for (const auto &cell : row.values) {
-      std::visit([](const auto &val) { std::cout << val << "\t| "; }, cell);
-    }
-    std::cout << '\n';
-  }
 }

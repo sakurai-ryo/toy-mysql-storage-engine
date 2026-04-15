@@ -22,6 +22,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
+#include <expected>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -32,6 +34,11 @@
 #include "thr_lock.h"
 
 #include "toydb_table.h"
+
+enum class ICP_MATCH_RESULT {
+  MATCH,
+  NOT_MATCH,
+};
 
 /**
  * @brief 同じテーブルの全てのhandlerインスタンスで共有するデータ
@@ -53,22 +60,13 @@ class Toydb_share final : public Handler_share {
 };
 
 /**
- * @brief テーブルスキャン（rnd_*）用のカーソル
+ * @brief Clustered Index or Secondary Index上のカーソル
+ *
+ * PKスキャン / テーブルスキャン時: Clustered Indexのキー
+ * セカンダリスキャン時: セカンダリ複合キー（PKのサフィックス含む）
  */
-struct ToydbScanCursor {
-  bool positioned{false};
-  // mapの先頭からの通し番号
-  size_t current_pos{0};
-};
-
-/**
- * @brief インデックススキャン（index_*）用のカーソル
- */
-struct ToydbIndexCursor {
-  bool positioned{false};
-  // PKスキャン時: Clustered Indexのキー
-  // セカンダリスキャン時: セカンダリ複合キー（PKサフィックス含む）
-  std::optional<ToydbIndexKey> current_index_key;
+struct ToydbCursor {
+  std::optional<ToydbIndexKey> current_key;
 };
 
 /** @brief
@@ -79,9 +77,7 @@ class ha_toydb : public handler {
   Toydb_share *share{};      ///< Shared lock info
   Toydb_share *get_share();  ///< Get the share
 
-  // テーブルスキャンとインデックススキャンでそれぞれカーソルを持つ
-  ToydbScanCursor scan_cursor;
-  ToydbIndexCursor index_cursor;
+  ToydbCursor cursor;
 
  public:
   ha_toydb(handlerton *hton, TABLE_SHARE *table_arg);
@@ -113,7 +109,7 @@ class ha_toydb : public handler {
    */
   ulong index_flags(uint, uint, bool) const override {
     return HA_READ_NEXT | HA_READ_PREV | HA_READ_ORDER |
-           HA_DO_INDEX_COND_PUSHDOWN;
+           HA_DO_INDEX_COND_PUSHDOWN | HA_KEYREAD_ONLY | HA_READ_RANGE;
   }
 
   uint max_supported_record_length() const override {
@@ -144,12 +140,12 @@ class ha_toydb : public handler {
   }
 
   int create(const char *, TABLE *table_info, HA_CREATE_INFO *create_info,
-             dd::Table *) override;  ///< required
+             dd::Table *) override;
 
   Item *idx_cond_push(uint keyno, Item *idx_cond) override;
 
-  void position(const uchar *record) override;  ///< required
-  int info(uint) override;                      ///< required
+  void position(const uchar *record) override;
+  int info(uint) override;
   int delete_all_rows(void) override;
   ha_rows records_in_range(uint index_num, key_range *min_key,
                            key_range *max_key) override;
@@ -159,9 +155,8 @@ class ha_toydb : public handler {
                           ulonglong nb_desired_values, ulonglong *first_value,
                           ulonglong *nb_reserved_values) override;
 
-  THR_LOCK_DATA **store_lock(
-      THD *thd, THR_LOCK_DATA **to,
-      enum thr_lock_type lock_type) override;  ///< required
+  THR_LOCK_DATA **store_lock(THD *thd, THR_LOCK_DATA **to,
+                             enum thr_lock_type lock_type) override;
 
  protected:
   int delete_table(const char *name, const dd::Table *) override;
@@ -176,19 +171,21 @@ class ha_toydb : public handler {
   int index_first(uchar *buf) override;
   int index_last(uchar *buf) override;
 
-  int rnd_next(uchar *buf) override;             ///< required
-  int rnd_pos(uchar *buf, uchar *pos) override;  ///< required
+  int rnd_next(uchar *buf) override;
+  int rnd_pos(uchar *buf, uchar *pos) override;
 
  private:
   /** @brief Storage Engineがサポートする機能のフラグ
    *
    * handler.hに一覧がある
    */
-  ulonglong table_flags() const override { return HA_BINLOG_STMT_CAPABLE; }
+  ulonglong table_flags() const override {
+    return HA_BINLOG_STMT_CAPABLE | HA_PRIMARY_KEY_IN_READ_INDEX;
+  }
 
   int open(const char *name, int mode, uint test_if_locked,
-           const dd::Table *table_def) override;  // required
-  int close(void) override;                       // required
+           const dd::Table *table_def) override;
+  int close(void) override;
 
   int write_row(uchar *buf) override;
   int update_row(const uchar *old_data, uchar *new_data) override;
@@ -197,17 +194,30 @@ class ha_toydb : public handler {
   int index_init(uint idx, bool sorted) override;
   int index_end() override;
 
-  int rnd_init(bool scan) override;  // required
+  int rnd_init(bool scan) override;
   int rnd_end() override;
 
   int extra(enum ha_extra_function operation) override;
 
-  int external_lock(THD *thd, int lock_type) override;  ///< required
+  int external_lock(THD *thd, int lock_type) override;
 
   bool is_primary_key_index(uint idx) const;
   ToydbIndexKey resolve_pk_key_from_cursor() const;
-  int read_row_from_fields(std::vector<SupportedDBValue> &row_data);
-  int decode_index_key(const uchar *key, uint key_len, ToydbIndexKey &out_key);
+  std::expected<std::vector<SupportedDBValue>, int> read_row_from_fields();
+  std::expected<ToydbIndexKey, int> deserialize_index_key(const uchar *key,
+                                                          uint key_len);
+
+  std::expected<ToydbIndexKey, int> deserialize_pk_from_ref(
+      const uchar *ref_buf);
+
+  // インデックスキーから行データを解決する（PK/セカンダリ共通）
+  std::optional<std::reference_wrapper<const std::vector<SupportedDBValue>>>
+  fetch_row_values(const ToydbTable *table,
+                   const ToydbIndexKey &index_key) const;
+
+  // 行をレコードバッファに格納してICP条件を評価する
+  std::expected<ICP_MATCH_RESULT, int> try_icp_match(
+      const std::vector<SupportedDBValue> &values, uchar *buf);
 
   // Handler_shareのロックをRAIIで管理する
   // 内部ではmysql_mutex_lock,mysql_mutex_unlockを利用していてstd::lock_guardを使えないのでラッパーを作った

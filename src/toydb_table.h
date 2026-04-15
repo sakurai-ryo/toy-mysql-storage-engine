@@ -47,12 +47,13 @@ using SupportedDBValue = std::variant<int64, std::string, std::monostate>;
 /**
  * @brief 各行を一意に参照するためのId
  */
-using ToydbRowId = uint16_t;
+using ToydbRowId = uint64_t;
 
 /**
  * @brief テーブル行
  */
 struct ToydbRow {
+  /// DDLでPKが指定されてない場合はこれをPKとする
   ToydbRowId id;
   std::vector<SupportedDBValue> values;
 };

@@ -180,7 +180,8 @@ class ha_toydb : public handler {
    * handler.hに一覧がある
    */
   ulonglong table_flags() const override {
-    return HA_BINLOG_STMT_CAPABLE | HA_PRIMARY_KEY_IN_READ_INDEX;
+    return HA_BINLOG_STMT_CAPABLE | HA_PRIMARY_KEY_IN_READ_INDEX |
+           HA_NULL_IN_KEY;
   }
 
   int open(const char *name, int mode, uint test_if_locked,

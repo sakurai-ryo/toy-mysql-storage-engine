@@ -93,6 +93,20 @@ CREATE TABLE t5 (
 ) ENGINE=TOYDB;
 INSERT INTO t5 (last_name, first_name) VALUES ('Smith', 'John'), ('Doe', 'Jane'), ('Smith', 'Alice');
 
+CREATE TABLE t6 (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    INDEX idx_customer (customer_id),
+    INDEX idx_status (status)
+) ENGINE=TOYDB;
+INSERT INTO t6 (customer_id, status) VALUES
+(1, 'pending'),
+(2, 'completed'),
+(1, 'shipped');
+
+SELECT * FROM t6 WHERE customer_id = 2 OR status = 'pending';
+
 SET SESSION cte_max_recursion_depth = 10000;
 INSERT INTO t3 (name)
 WITH RECURSIVE seq AS (

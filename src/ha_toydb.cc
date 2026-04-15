@@ -196,10 +196,8 @@ int ha_toydb::close(void) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
 
-  // テーブル削除前に該当テーブルのhandlerは全てcloseされるので、複数handlerがいても安全
-  if (this->share != nullptr) {
-    this->share->toydb_table = nullptr;
-  }
+  // TODO:
+  // InnoDBだと参照カウントを作って同じTableのhandlerが全てなくなったタイミングでthis->shareをfreeしている
 
   return 0;
 }
@@ -345,7 +343,7 @@ Item *ha_toydb::idx_cond_push(uint keyno, Item *idx_cond) {
  */
 int ha_toydb::index_init(uint idx, bool) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, idx));
   this->cursor = ToydbCursor{};
   this->active_index = idx;
   return 0;
@@ -356,7 +354,7 @@ int ha_toydb::index_init(uint idx, bool) {
  */
 int ha_toydb::index_end() {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
   this->cursor = ToydbCursor{};
   this->active_index = MAX_KEY;
   return 0;
@@ -370,7 +368,7 @@ int ha_toydb::index_end() {
 std::expected<ToydbIndexKey, int> ha_toydb::deserialize_index_key(
     const uchar *key, uint key_len) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   // 利用するインデックスの情報
   KEY *key_info = &this->table->key_info[this->active_index];
@@ -520,7 +518,7 @@ ha_toydb::fetch_row_values(const ToydbTable *table,
 std::expected<ICP_MATCH_RESULT, int> ha_toydb::try_icp_match(
     const std::vector<SupportedDBValue> &values, uchar *buf) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   const int ret = store_row_to_buf(this->table, buf, values);
   if (ret != 0) return std::unexpected(ret);
@@ -537,8 +535,8 @@ std::expected<ICP_MATCH_RESULT, int> ha_toydb::try_icp_match(
 int ha_toydb::index_read(uchar *buf, const uchar *key, uint key_len,
                          enum ha_rkey_function find_flag) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb",
-             ("%s find_flag=%s", __func__, ha_rkey_function_name(find_flag)));
+  DBUG_PRINT("toydb", ("%s idx=%u find_flag=%s", __func__, this->active_index,
+                       ha_rkey_function_name(find_flag)));
 
   auto search_key_result = deserialize_index_key(key, key_len);
   if (!search_key_result) return search_key_result.error();
@@ -647,7 +645,7 @@ int ha_toydb::index_read(uchar *buf, const uchar *key, uint key_len,
  */
 int ha_toydb::index_next(uchar *buf) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   if (!this->cursor.current_key.has_value()) return HA_ERR_END_OF_FILE;
 
@@ -692,7 +690,7 @@ int ha_toydb::index_next(uchar *buf) {
  */
 int ha_toydb::index_prev(uchar *buf) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   if (!this->cursor.current_key.has_value()) return HA_ERR_END_OF_FILE;
 
@@ -740,7 +738,7 @@ int ha_toydb::index_prev(uchar *buf) {
  */
 int ha_toydb::index_first(uchar *buf) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
   const auto *toydb_table = this->share->toydb_table;
@@ -780,7 +778,7 @@ int ha_toydb::index_first(uchar *buf) {
  */
 int ha_toydb::index_last(uchar *buf) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
   const auto *toydb_table = this->share->toydb_table;
@@ -829,14 +827,14 @@ int ha_toydb::index_last(uchar *buf) {
  */
 int ha_toydb::rnd_init(bool) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
   this->cursor = ToydbCursor{};
   return 0;
 }
 
 int ha_toydb::rnd_end() {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
   return 0;
 }
 
@@ -845,7 +843,7 @@ int ha_toydb::rnd_end() {
  */
 int ha_toydb::rnd_next(uchar *buf) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
@@ -878,7 +876,7 @@ int ha_toydb::rnd_next(uchar *buf) {
  */
 void ha_toydb::position(const uchar *) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   // position()はMySQLサーバーが行読み取り直後に呼ぶので
   // table->record[0]に現在の行データが入っている
@@ -892,7 +890,7 @@ void ha_toydb::position(const uchar *) {
  */
 int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
@@ -928,12 +926,78 @@ int ha_toydb::info(uint flag) {
 }
 
 /**
+ * @brief ha_extra_functionのフラグに対応する文字列を返す（デバッグ用）
+ */
+static const char *ha_extra_function_names[] = {
+    "HA_EXTRA_NORMAL",                       // 0
+    "HA_EXTRA_QUICK",                        // 1
+    "HA_EXTRA_NOT_USED",                     // 2
+    nullptr,                                 // 3
+    nullptr,                                 // 4
+    "HA_EXTRA_NO_READCHECK",                 // 5
+    "HA_EXTRA_READCHECK",                    // 6
+    "HA_EXTRA_KEYREAD",                      // 7
+    "HA_EXTRA_NO_KEYREAD",                   // 8
+    "HA_EXTRA_NO_USER_CHANGE",               // 9
+    nullptr,                                 // 10
+    nullptr,                                 // 11
+    "HA_EXTRA_WAIT_LOCK",                    // 12
+    "HA_EXTRA_NO_WAIT_LOCK",                 // 13
+    nullptr,                                 // 14
+    nullptr,                                 // 15
+    "HA_EXTRA_NO_KEYS",                      // 16
+    "HA_EXTRA_KEYREAD_CHANGE_POS",           // 17
+    "HA_EXTRA_REMEMBER_POS",                 // 18
+    "HA_EXTRA_RESTORE_POS",                  // 19
+    nullptr,                                 // 20
+    "HA_EXTRA_FORCE_REOPEN",                 // 21
+    "HA_EXTRA_FLUSH",                        // 22
+    "HA_EXTRA_NO_ROWS",                      // 23
+    "HA_EXTRA_RESET_STATE",                  // 24
+    "HA_EXTRA_IGNORE_DUP_KEY",               // 25
+    "HA_EXTRA_NO_IGNORE_DUP_KEY",            // 26
+    "HA_EXTRA_PREPARE_FOR_DROP",             // 27
+    "HA_EXTRA_PREPARE_FOR_UPDATE",           // 28
+    "HA_EXTRA_PRELOAD_BUFFER_SIZE",          // 29
+    "HA_EXTRA_CHANGE_KEY_TO_UNIQUE",         // 30
+    "HA_EXTRA_CHANGE_KEY_TO_DUP",            // 31
+    "HA_EXTRA_KEYREAD_PRESERVE_FIELDS",      // 32
+    "HA_EXTRA_IGNORE_NO_KEY",                // 33
+    "HA_EXTRA_NO_IGNORE_NO_KEY",             // 34
+    "HA_EXTRA_MARK_AS_LOG_TABLE",            // 35
+    "HA_EXTRA_WRITE_CAN_REPLACE",            // 36
+    "HA_EXTRA_WRITE_CANNOT_REPLACE",         // 37
+    "HA_EXTRA_DELETE_CANNOT_BATCH",          // 38
+    "HA_EXTRA_UPDATE_CANNOT_BATCH",          // 39
+    "HA_EXTRA_INSERT_WITH_UPDATE",           // 40
+    "HA_EXTRA_PREPARE_FOR_RENAME",           // 41
+    "HA_EXTRA_ADD_CHILDREN_LIST",            // 42
+    "HA_EXTRA_ATTACH_CHILDREN",              // 43
+    "HA_EXTRA_IS_ATTACHED_CHILDREN",         // 44
+    "HA_EXTRA_DETACH_CHILDREN",              // 45
+    "HA_EXTRA_EXPORT",                       // 46
+    "HA_EXTRA_SECONDARY_SORT_ROWID",         // 47
+    "HA_EXTRA_NO_READ_LOCKING",              // 48
+    "HA_EXTRA_BEGIN_ALTER_COPY",             // 49
+    "HA_EXTRA_END_ALTER_COPY",               // 50
+    "HA_EXTRA_NO_AUTOINC_LOCKING",           // 51
+    "HA_EXTRA_ENABLE_UNIQUE_RECORD_FILTER",  // 52
+    "HA_EXTRA_DISABLE_UNIQUE_RECORD_FILTER"  // 53
+};
+
+/**
  * @brief mysql側からSEに対してヒントを渡すためのメソッド
  */
 int ha_toydb::extra(enum ha_extra_function operation) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb",
-             ("%s operation=%d", __func__, static_cast<int>(operation)));
+  const auto op = static_cast<size_t>(operation);
+  const char *op_name = (op < std::size(ha_extra_function_names) &&
+                         ha_extra_function_names[op] != nullptr)
+                            ? ha_extra_function_names[op]
+                            : "UNKNOWN";
+  DBUG_PRINT("toydb", ("%s operation=%s(%d)", __func__, op_name,
+                       static_cast<int>(operation)));
+
   switch (operation) {
     // TODO: 本来ならoperationに応じて最適化処理を走らせる
     case HA_EXTRA_KEYREAD:

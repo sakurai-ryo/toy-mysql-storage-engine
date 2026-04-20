@@ -203,18 +203,13 @@ class ha_toydb : public handler {
   int external_lock(THD *thd, int lock_type) override;
 
   bool is_primary_key_index(uint idx) const;
-  ToydbIndexKey resolve_pk_key_from_cursor() const;
+  std::expected<ToydbIndexKey, int> resolve_pk_key_from_cursor() const;
   std::expected<std::vector<SupportedDBValue>, int> read_row_from_fields();
   std::expected<ToydbIndexKey, int> deserialize_index_key(const uchar *key,
                                                           uint key_len);
 
   std::expected<ToydbIndexKey, int> deserialize_pk_from_ref(
       const uchar *ref_buf);
-
-  // インデックスキーから行データを解決する（PK/セカンダリ共通）
-  std::optional<std::reference_wrapper<const std::vector<SupportedDBValue>>>
-  fetch_row_values(const ToydbTable *table,
-                   const ToydbIndexKey &index_key) const;
 
   // 行をレコードバッファに格納してICP条件を評価する
   std::expected<ICP_MATCH_RESULT, int> try_icp_match(

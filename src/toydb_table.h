@@ -26,8 +26,12 @@
 #define TOYDB_TABLE_H
 
 #include <sys/types.h>
+#include <concepts>
 #include <cstddef>
+#include <functional>
+#include <iterator>
 #include <map>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -164,8 +168,6 @@ class ToydbTable final {
   int add_column(const std::string &name, enum_field_types type,
                  ColumnFlag flags);
   int insert_row(std::vector<SupportedDBValue> row_data);
-  int update_row(size_t row_index, std::vector<SupportedDBValue> row_data);
-  int delete_row(size_t row_index);
   int update_row_by_key(const ToydbIndexKey &key,
                         std::vector<SupportedDBValue> row_data);
   int delete_row_by_key(const ToydbIndexKey &key);
@@ -193,7 +195,82 @@ class ToydbTable final {
   int remove_secondary_keys(const std::vector<SupportedDBValue> &row_data);
   bool has_secondary_index(uint mysql_index_no) const;
   const ToydbSecondaryIndex &get_secondary_index(uint mysql_index_no) const;
+
+  /**
+   * @brief Clustered Index / Secondary Index を統一的に走査する
+   */
+  class IndexRange {
+   public:
+    struct Iterator {
+      using iterator_category = std::bidirectional_iterator_tag;
+      using difference_type = std::ptrdiff_t;
+      using value_type = std::vector<SupportedDBValue>;
+      using reference = const std::vector<SupportedDBValue> &;
+      using pointer = const std::vector<SupportedDBValue> *;
+
+      std::variant<RowIterator, SecondaryIndexIterator> iter;
+      const ToydbTable *table{nullptr};
+      uint active_index{0};
+
+      Iterator() = default;
+      // PK経由
+      Iterator(RowIterator it, const ToydbTable *t) : iter(it), table(t) {}
+      // Secondary Index経由
+      Iterator(SecondaryIndexIterator it, const ToydbTable *t, uint idx)
+          : iter(it), table(t), active_index(idx) {}
+
+      // 行データを返す（Secondary の場合は PK ルックアップ）
+      reference operator*() const;
+      pointer operator->() const;
+
+      // 補助アクセサ
+      const ToydbIndexKey &key() const;
+      bool is_primary() const;
+
+      Iterator &operator++();
+      Iterator operator++(int);
+      Iterator &operator--();
+      Iterator operator--(int);
+
+      bool operator==(const Iterator &other) const;
+    };
+
+    IndexRange(const ToydbTable *table, uint active_index,
+               uint primary_key_index);
+
+    // Iterator用のメソッド群
+    Iterator begin() const;
+    Iterator end() const;
+    Iterator last() const;
+    Iterator find(const ToydbIndexKey &key) const;
+    Iterator lower_bound(const ToydbIndexKey &key) const;
+    Iterator upper_bound(const ToydbIndexKey &key) const;
+
+    /**
+     * @brief key と「等しい」最初のエントリを返す
+     *
+     * C++でいうlower_bound相当
+     */
+    Iterator seek_equal(const ToydbIndexKey &key) const;
+    /**
+     * @brief key より「大きい」最初のエントリを返す
+     *
+     * C++でいうupper_bound相当
+     */
+    Iterator seek_after(const ToydbIndexKey &key) const;
+
+    bool empty() const;
+    bool is_primary() const;
+
+   private:
+    const ToydbTable *table_;
+    uint active_index_;
+    bool is_primary_;
+  };
 };
+
+// Iteratorを正しく実装しているかのチェック
+static_assert(std::bidirectional_iterator<ToydbTable::IndexRange::Iterator>);
 
 /**
  * @brief セカンダリキーのPK部分以外がプレフィックスと一致するか判定

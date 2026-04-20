@@ -153,9 +153,14 @@ bool ha_toydb::is_primary_key_index(uint idx) const {
   return idx == this->table->s->primary_key;
 }
 
-ToydbIndexKey ha_toydb::resolve_pk_key_from_cursor() const {
+std::expected<ToydbIndexKey, int> ha_toydb::resolve_pk_key_from_cursor() const {
   // セカンダリインデックススキャン中はセカンダリキーからPK部分を抽出する
   // テーブルスキャン(active_index=MAX_KEY)やPKスキャン中はカーソルのキーがそのままPK
+
+  if (!this->cursor.current_key.has_value()) {
+    return std::unexpected(HA_ERR_INTERNAL_ERROR);
+  }
+
   if (this->active_index != MAX_KEY &&
       !is_primary_key_index(this->active_index)) {
     return this->share->toydb_table->extract_pk_key_from_secondary(
@@ -301,8 +306,9 @@ int ha_toydb::update_row(const uchar *, uchar *) {
   if (!row_data) return row_data.error();
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const ToydbIndexKey pk_key = resolve_pk_key_from_cursor();
-  return this->share->toydb_table->update_row_by_key(pk_key,
+  const auto pk_key = resolve_pk_key_from_cursor();
+  if (!pk_key) return pk_key.error();
+  return this->share->toydb_table->update_row_by_key(*pk_key,
                                                      std::move(*row_data));
 }
 
@@ -315,8 +321,9 @@ int ha_toydb::delete_row(const uchar *) {
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
 
-  const ToydbIndexKey pk_key = resolve_pk_key_from_cursor();
-  return this->share->toydb_table->delete_row_by_key(pk_key);
+  const auto pk_key = resolve_pk_key_from_cursor();
+  if (!pk_key) return pk_key.error();
+  return this->share->toydb_table->delete_row_by_key(*pk_key);
 }
 
 /**
@@ -485,32 +492,6 @@ static const char *ha_rkey_function_name(enum ha_rkey_function flag) {
 }
 
 /**
- * @brief active_indexに応じてインデックスキーから行データを解決する
- *
- * PKスキャン時: Clustered Indexから直接取得
- * セカンダリスキャン時: セカンダリキーからPKを抽出してClustered
- * Indexをルックアップ
- */
-std::optional<std::reference_wrapper<const std::vector<SupportedDBValue>>>
-ha_toydb::fetch_row_values(const ToydbTable *table,
-                           const ToydbIndexKey &index_key) const {
-  // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
-
-  if (is_primary_key_index(this->active_index)) {
-    const auto it = table->find_row(index_key);
-    if (it == table->rows_end()) return std::nullopt;
-    return it->second.values;
-  }
-
-  const ToydbIndexKey pk_key =
-      table->extract_pk_key_from_secondary(this->active_index, index_key);
-  const auto it = table->find_row(pk_key);
-  if (it == table->rows_end()) return std::nullopt;
-  return it->second.values;
-}
-
-/**
  * @brief 行をレコードバッファに格納してICP条件を評価する
  *
  * @return ICP_MATCH_RESULT（マッチ/ミスマッチ）、エラー時はMySQLエラーコード
@@ -543,94 +524,43 @@ int ha_toydb::index_read(uchar *buf, const uchar *key, uint key_len,
   auto search_key = std::move(*search_key_result);
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const auto *toydb_table = this->share->toydb_table;
+  const ToydbTable::IndexRange range(this->share->toydb_table,
+                                     this->active_index,
+                                     this->table->s->primary_key);
 
-  if (is_primary_key_index(this->active_index)) {
-    // --- Clustered Index検索 ---
-    ToydbTable::RowIterator iter;
-
-    switch (find_flag) {
-      case HA_READ_KEY_EXACT:
-        iter = toydb_table->find_row(search_key);
-        if (iter == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
-        break;
-      case HA_READ_KEY_OR_NEXT:
-        iter = toydb_table->lower_bound_row(search_key);
-        if (iter == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
-        break;
-      case HA_READ_AFTER_KEY:
-        iter = toydb_table->upper_bound_row(search_key);
-        if (iter == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
-        break;
-      case HA_READ_KEY_OR_PREV:
-        iter = toydb_table->upper_bound_row(search_key);
-        if (iter == toydb_table->rows_begin()) return HA_ERR_KEY_NOT_FOUND;
-        --iter;
-        break;
-      case HA_READ_BEFORE_KEY:
-        iter = toydb_table->lower_bound_row(search_key);
-        if (iter == toydb_table->rows_begin()) return HA_ERR_KEY_NOT_FOUND;
-        --iter;
-        break;
-      default:
-        return HA_ERR_UNSUPPORTED;
-    }
-
-    for (; iter != toydb_table->rows_end(); ++iter) {
-      this->cursor.current_key = iter->first;
-      const auto result = try_icp_match(iter->second.values, buf);
-      if (!result) return result.error();
-      if (*result == ICP_MATCH_RESULT::MATCH) {
-        ha_statistic_increment(&System_status_var::ha_read_key_count);
-        return 0;
-      }
-    }
-    return HA_ERR_KEY_NOT_FOUND;
-  }
-
-  // --- Secondary Index検索 ---
-  const auto &sec_idx = toydb_table->get_secondary_index(this->active_index);
-  const auto &entries = sec_idx.entries;
-  ToydbTable::SecondaryIndexIterator sec_iter;
+  auto iter = range.end();
 
   switch (find_flag) {
     case HA_READ_KEY_EXACT:
-      sec_iter = entries.lower_bound(search_key);
-      if (sec_iter == entries.end() ||
-          !key_prefix_matches(*sec_iter, search_key))
-        return HA_ERR_KEY_NOT_FOUND;
+      iter = range.seek_equal(search_key);
+      if (iter == range.end()) return HA_ERR_KEY_NOT_FOUND;
       break;
     case HA_READ_KEY_OR_NEXT:
-      sec_iter = entries.lower_bound(search_key);
-      if (sec_iter == entries.end()) return HA_ERR_KEY_NOT_FOUND;
+      iter = range.lower_bound(search_key);
+      if (iter == range.end()) return HA_ERR_KEY_NOT_FOUND;
       break;
     case HA_READ_AFTER_KEY:
-      sec_iter = entries.lower_bound(search_key);
-      while (sec_iter != entries.end() &&
-             key_prefix_matches(*sec_iter, search_key)) {
-        ++sec_iter;
-      }
-      if (sec_iter == entries.end()) return HA_ERR_KEY_NOT_FOUND;
+      iter = range.seek_after(search_key);
+      if (iter == range.end()) return HA_ERR_KEY_NOT_FOUND;
       break;
     case HA_READ_KEY_OR_PREV:
-      sec_iter = entries.upper_bound(search_key);
-      if (sec_iter == entries.begin()) return HA_ERR_KEY_NOT_FOUND;
-      --sec_iter;
+      iter = range.upper_bound(search_key);
+      if (iter == range.begin()) return HA_ERR_KEY_NOT_FOUND;
+      --iter;
       break;
     case HA_READ_BEFORE_KEY:
-      sec_iter = entries.lower_bound(search_key);
-      if (sec_iter == entries.begin()) return HA_ERR_KEY_NOT_FOUND;
-      --sec_iter;
+      iter = range.lower_bound(search_key);
+      if (iter == range.begin()) return HA_ERR_KEY_NOT_FOUND;
+      --iter;
       break;
     default:
       return HA_ERR_UNSUPPORTED;
   }
 
-  for (; sec_iter != entries.end(); ++sec_iter) {
-    this->cursor.current_key = *sec_iter;
-    const auto values = fetch_row_values(toydb_table, *sec_iter);
-    if (!values) return HA_ERR_KEY_NOT_FOUND;
-    const auto result = try_icp_match(values->get(), buf);
+  // ICPマッチループ（PK/Secondary共通）
+  for (; iter != range.end(); ++iter) {
+    this->cursor.current_key = iter.key();
+    const auto result = try_icp_match(*iter, buf);
     if (!result) return result.error();
     if (*result == ICP_MATCH_RESULT::MATCH) {
       ha_statistic_increment(&System_status_var::ha_read_key_count);
@@ -650,32 +580,16 @@ int ha_toydb::index_next(uchar *buf) {
   if (!this->cursor.current_key.has_value()) return HA_ERR_END_OF_FILE;
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const auto *toydb_table = this->share->toydb_table;
+  const ToydbTable::IndexRange range(this->share->toydb_table,
+                                     this->active_index,
+                                     this->table->s->primary_key);
 
-  if (is_primary_key_index(this->active_index)) {
-    auto iter = toydb_table->find_row(*this->cursor.current_key);
-    if (iter == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
-    for (++iter; iter != toydb_table->rows_end(); ++iter) {
-      this->cursor.current_key = iter->first;
-      const auto result = try_icp_match(iter->second.values, buf);
-      if (!result) return result.error();
-      if (*result == ICP_MATCH_RESULT::MATCH) {
-        ha_statistic_increment(&System_status_var::ha_read_next_count);
-        return 0;
-      }
-    }
-    return HA_ERR_END_OF_FILE;
-  }
+  auto iter = range.find(*this->cursor.current_key);
+  if (iter == range.end()) return HA_ERR_KEY_NOT_FOUND;
 
-  const auto &entries =
-      toydb_table->get_secondary_index(this->active_index).entries;
-  auto sec_iter = entries.find(*this->cursor.current_key);
-  if (sec_iter == entries.end()) return HA_ERR_KEY_NOT_FOUND;
-  for (++sec_iter; sec_iter != entries.end(); ++sec_iter) {
-    this->cursor.current_key = *sec_iter;
-    const auto values = fetch_row_values(toydb_table, *sec_iter);
-    if (!values) return HA_ERR_KEY_NOT_FOUND;
-    const auto result = try_icp_match(values->get(), buf);
+  for (++iter; iter != range.end(); ++iter) {
+    this->cursor.current_key = iter.key();
+    const auto result = try_icp_match(*iter, buf);
     if (!result) return result.error();
     if (*result == ICP_MATCH_RESULT::MATCH) {
       ha_statistic_increment(&System_status_var::ha_read_next_count);
@@ -695,35 +609,16 @@ int ha_toydb::index_prev(uchar *buf) {
   if (!this->cursor.current_key.has_value()) return HA_ERR_END_OF_FILE;
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const auto *toydb_table = this->share->toydb_table;
+  const ToydbTable::IndexRange range(this->share->toydb_table,
+                                     this->active_index,
+                                     this->table->s->primary_key);
 
-  if (is_primary_key_index(this->active_index)) {
-    auto iter = toydb_table->find_row(*this->cursor.current_key);
-    if (iter == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
-    while (iter != toydb_table->rows_begin()) {
-      --iter;
-      this->cursor.current_key = iter->first;
-      const auto result = try_icp_match(iter->second.values, buf);
-      if (!result) return result.error();
-      if (*result == ICP_MATCH_RESULT::MATCH) {
-        ha_statistic_increment(&System_status_var::ha_read_prev_count);
-        return 0;
-      }
-    }
-    return HA_ERR_END_OF_FILE;
-  }
-
-  const auto &entries =
-      toydb_table->get_secondary_index(this->active_index).entries;
-  auto sec_iter = entries.find(*this->cursor.current_key);
-  if (sec_iter == entries.end() || sec_iter == entries.begin())
-    return HA_ERR_END_OF_FILE;
-  while (sec_iter != entries.begin()) {
-    --sec_iter;
-    this->cursor.current_key = *sec_iter;
-    const auto values = fetch_row_values(toydb_table, *sec_iter);
-    if (!values) return HA_ERR_KEY_NOT_FOUND;
-    const auto result = try_icp_match(values->get(), buf);
+  auto iter = range.find(*this->cursor.current_key);
+  if (iter == range.end() || iter == range.begin()) return HA_ERR_END_OF_FILE;
+  while (iter != range.begin()) {
+    --iter;
+    this->cursor.current_key = iter.key();
+    const auto result = try_icp_match(*iter, buf);
     if (!result) return result.error();
     if (*result == ICP_MATCH_RESULT::MATCH) {
       ha_statistic_increment(&System_status_var::ha_read_prev_count);
@@ -741,29 +636,13 @@ int ha_toydb::index_first(uchar *buf) {
   DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const auto *toydb_table = this->share->toydb_table;
+  const ToydbTable::IndexRange range(this->share->toydb_table,
+                                     this->active_index,
+                                     this->table->s->primary_key);
 
-  if (is_primary_key_index(this->active_index)) {
-    for (auto iter = toydb_table->rows_begin(); iter != toydb_table->rows_end();
-         ++iter) {
-      this->cursor.current_key = iter->first;
-      const auto result = try_icp_match(iter->second.values, buf);
-      if (!result) return result.error();
-      if (*result == ICP_MATCH_RESULT::MATCH) {
-        ha_statistic_increment(&System_status_var::ha_read_first_count);
-        return 0;
-      }
-    }
-    return HA_ERR_END_OF_FILE;
-  }
-
-  const auto &entries =
-      toydb_table->get_secondary_index(this->active_index).entries;
-  for (auto sec_iter = entries.begin(); sec_iter != entries.end(); ++sec_iter) {
-    this->cursor.current_key = *sec_iter;
-    const auto values = fetch_row_values(toydb_table, *sec_iter);
-    if (!values) return HA_ERR_KEY_NOT_FOUND;
-    const auto result = try_icp_match(values->get(), buf);
+  for (auto iter = range.begin(); iter != range.end(); ++iter) {
+    this->cursor.current_key = iter.key();
+    const auto result = try_icp_match(*iter, buf);
     if (!result) return result.error();
     if (*result == ICP_MATCH_RESULT::MATCH) {
       ha_statistic_increment(&System_status_var::ha_read_first_count);
@@ -781,43 +660,23 @@ int ha_toydb::index_last(uchar *buf) {
   DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
   std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const auto *toydb_table = this->share->toydb_table;
+  const ToydbTable::IndexRange range(this->share->toydb_table,
+                                     this->active_index,
+                                     this->table->s->primary_key);
 
-  if (is_primary_key_index(this->active_index)) {
-    if (toydb_table->row_count() == 0) return HA_ERR_END_OF_FILE;
-    auto iter = toydb_table->rows_last();
-    while (true) {
-      this->cursor.current_key = iter->first;
-      const auto result = try_icp_match(iter->second.values, buf);
-      if (!result) return result.error();
-      if (*result == ICP_MATCH_RESULT::MATCH) {
-        ha_statistic_increment(&System_status_var::ha_read_last_count);
-        return 0;
-      }
-
-      if (iter == toydb_table->rows_begin()) break;
-      --iter;
-    }
-    return HA_ERR_END_OF_FILE;
-  }
-
-  const auto &entries =
-      toydb_table->get_secondary_index(this->active_index).entries;
-  if (entries.empty()) return HA_ERR_END_OF_FILE;
-  auto sec_iter = entries.end();
+  if (range.empty()) return HA_ERR_END_OF_FILE;
+  auto iter = range.last();
   while (true) {
-    --sec_iter;
-    this->cursor.current_key = *sec_iter;
-    const auto values = fetch_row_values(toydb_table, *sec_iter);
-    if (!values) return HA_ERR_KEY_NOT_FOUND;
-    const auto result = try_icp_match(values->get(), buf);
+    this->cursor.current_key = iter.key();
+    const auto result = try_icp_match(*iter, buf);
     if (!result) return result.error();
     if (*result == ICP_MATCH_RESULT::MATCH) {
       ha_statistic_increment(&System_status_var::ha_read_last_count);
       return 0;
     }
 
-    if (sec_iter == entries.begin()) break;
+    if (iter == range.begin()) break;
+    --iter;
   }
   return HA_ERR_END_OF_FILE;
 }
@@ -1113,32 +972,21 @@ ha_rows ha_toydb::records_in_range(uint index_num, key_range *min_key,
     max_index_key = std::move(*max_result);
   }
 
-  if (is_primary_key_index(index_num)) {
-    auto start = min_key != nullptr
-                     ? (min_key->flag == HA_READ_AFTER_KEY
-                            ? toydb_table->upper_bound_row(*min_index_key)
-                            : toydb_table->lower_bound_row(*min_index_key))
-                     : toydb_table->rows_begin();
-    auto end = max_key != nullptr
-                   ? (max_key->flag == HA_READ_BEFORE_KEY
-                          ? toydb_table->lower_bound_row(*max_index_key)
-                          : toydb_table->upper_bound_row(*max_index_key))
-                   : toydb_table->rows_end();
-    const ha_rows n_rows = std::max(0L, std::distance(start, end));
-    return n_rows > 0 ? n_rows : 1;
-  }
+  const ToydbTable::IndexRange range(toydb_table, index_num,
+                                     this->table->s->primary_key);
 
-  // Secondary Index
-  const auto &entries = toydb_table->get_secondary_index(index_num).entries;
   auto start = min_key != nullptr ? (min_key->flag == HA_READ_AFTER_KEY
-                                         ? entries.upper_bound(*min_index_key)
-                                         : entries.lower_bound(*min_index_key))
-                                  : entries.begin();
-  auto end = max_key != nullptr ? (max_key->flag == HA_READ_BEFORE_KEY
-                                       ? entries.lower_bound(*max_index_key)
-                                       : entries.upper_bound(*max_index_key))
-                                : entries.end();
-  ha_rows n_rows = std::max(0L, std::distance(start, end));
+                                         ? range.upper_bound(*min_index_key)
+                                         : range.lower_bound(*min_index_key))
+                                  : range.begin();
+  auto range_end = max_key != nullptr
+                       ? (max_key->flag == HA_READ_BEFORE_KEY
+                              ? range.lower_bound(*max_index_key)
+                              : range.upper_bound(*max_index_key))
+                       : range.end();
+
+  ha_rows n_rows = 0;
+  for (auto it = start; it != range_end; ++it) ++n_rows;
   return n_rows > 0 ? n_rows : 1;
 }
 

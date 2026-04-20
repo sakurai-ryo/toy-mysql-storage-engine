@@ -25,9 +25,12 @@
 #include "toydb_table.h"
 
 #include <cstddef>
+#include <functional>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -222,43 +225,6 @@ int ToydbTable::insert_row(std::vector<SupportedDBValue> row_data) {
   const ToydbRowId row_id = this->next_row_id++;
   ToydbRow row{row_id, std::move(row_data)};
   this->rows.emplace(std::move(key), std::move(row));
-  return 0;
-}
-
-int ToydbTable::update_row(size_t row_index,
-                           std::vector<SupportedDBValue> row_data) {
-  // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
-  if (row_index >= this->rows.size()) {
-    return HA_ERR_KEY_NOT_FOUND;
-  }
-
-  if (row_data.size() != this->columns.size()) {
-    return ER_WRONG_VALUE_COUNT;
-  }
-
-  for (size_t i = 0; i < this->columns.size(); ++i) {
-    const auto &col = this->columns.at(i);
-    if (!check_type_match(col.type, col.flags, row_data.at(i))) {
-      return ER_INCORRECT_TYPE;
-    }
-  }
-
-  auto it = this->rows.begin();
-  std::advance(it, row_index);
-  it->second.values = std::move(row_data);
-  return 0;
-}
-
-int ToydbTable::delete_row(size_t row_index) {
-  // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
-  if (row_index >= this->rows.size()) {
-    return HA_ERR_KEY_NOT_FOUND;
-  }
-  auto it = this->rows.begin();
-  std::advance(it, row_index);
-  this->rows.erase(it);
   return 0;
 }
 
@@ -466,3 +432,161 @@ const ToydbSecondaryIndex &ToydbTable::get_secondary_index(
     uint mysql_index_no) const {
   return this->secondary_indexes.at(mysql_index_no);
 }
+
+ToydbTable::IndexRange::Iterator::reference
+ToydbTable::IndexRange::Iterator::operator*() const {
+  return std::visit(
+      [this](const auto &it) -> reference {
+        using T = std::decay_t<decltype(it)>;
+        if constexpr (std::is_same_v<T, ToydbTable::RowIterator>) {
+          // PKの場合はただ行を返して終了
+          return it->second.values;
+        } else {
+          // SecondaryIndexの場合は、PKを抽出してPKルックアップしてから行を返す
+          const ToydbIndexKey pk_key =
+              table->extract_pk_key_from_secondary(active_index, *it);
+          const auto row_it = table->find_row(pk_key);
+          return row_it->second.values;
+        }
+      },
+      iter);
+}
+
+ToydbTable::IndexRange::Iterator::pointer
+ToydbTable::IndexRange::Iterator::operator->() const {
+  return &(**this);
+}
+
+const ToydbIndexKey &ToydbTable::IndexRange::Iterator::key() const {
+  return std::visit(
+      [](const auto &it) -> const ToydbIndexKey & {
+        using T = std::decay_t<decltype(it)>;
+        if constexpr (std::is_same_v<T, ToydbTable::RowIterator>) {
+          return it->first;
+        } else {
+          return *it;
+        }
+      },
+      iter);
+}
+
+bool ToydbTable::IndexRange::Iterator::is_primary() const {
+  return std::holds_alternative<ToydbTable::RowIterator>(this->iter);
+}
+
+ToydbTable::IndexRange::Iterator &
+ToydbTable::IndexRange::Iterator::operator++() {
+  std::visit([](auto &it) { ++it; }, this->iter);
+  return *this;
+}
+
+ToydbTable::IndexRange::Iterator ToydbTable::IndexRange::Iterator::operator++(
+    int) {
+  auto tmp = *this;
+  ++(*this);
+  return tmp;
+}
+
+ToydbTable::IndexRange::Iterator &
+ToydbTable::IndexRange::Iterator::operator--() {
+  std::visit([](auto &it) { --it; }, this->iter);
+  return *this;
+}
+
+ToydbTable::IndexRange::Iterator ToydbTable::IndexRange::Iterator::operator--(
+    int) {
+  auto tmp = *this;
+  --(*this);
+  return tmp;
+}
+
+bool ToydbTable::IndexRange::Iterator::operator==(const Iterator &other) const {
+  return this->iter == other.iter;
+}
+
+ToydbTable::IndexRange::IndexRange(const ToydbTable *table, uint active_index,
+                                   uint primary_key_index)
+    : table_(table),
+      active_index_(active_index),
+      is_primary_(active_index == primary_key_index) {}
+
+ToydbTable::IndexRange::Iterator ToydbTable::IndexRange::begin() const {
+  if (this->is_primary_) return {this->table_->rows_begin(), this->table_};
+  return {
+      this->table_->get_secondary_index(this->active_index_).entries.begin(),
+      this->table_, this->active_index_};
+}
+
+ToydbTable::IndexRange::Iterator ToydbTable::IndexRange::end() const {
+  if (this->is_primary_) return {this->table_->rows_end(), this->table_};
+  return {this->table_->get_secondary_index(this->active_index_).entries.end(),
+          this->table_, this->active_index_};
+}
+
+ToydbTable::IndexRange::Iterator ToydbTable::IndexRange::last() const {
+  if (this->is_primary_) return {this->table_->rows_last(), this->table_};
+  auto it =
+      this->table_->get_secondary_index(this->active_index_).entries.end();
+  --it;
+  return {it, this->table_, this->active_index_};
+}
+
+ToydbTable::IndexRange::Iterator ToydbTable::IndexRange::find(
+    const ToydbIndexKey &key) const {
+  // iter = range.lower_bound(search_key);
+  // if (iter != range.end() && !key_prefix_matches(iter.key(), search_key))
+  //   return HA_ERR_KEY_NOT_FOUND;
+  if (this->is_primary_) return {this->table_->find_row(key), this->table_};
+
+  return {
+      this->table_->get_secondary_index(this->active_index_).entries.find(key),
+      this->table_, this->active_index_};
+}
+
+ToydbTable::IndexRange::Iterator ToydbTable::IndexRange::lower_bound(
+    const ToydbIndexKey &key) const {
+  if (this->is_primary_)
+    return {this->table_->lower_bound_row(key), this->table_};
+  return {this->table_->get_secondary_index(this->active_index_)
+              .entries.lower_bound(key),
+          this->table_, this->active_index_};
+}
+
+ToydbTable::IndexRange::Iterator ToydbTable::IndexRange::upper_bound(
+    const ToydbIndexKey &key) const {
+  if (this->is_primary_)
+    return {this->table_->upper_bound_row(key), this->table_};
+  return {this->table_->get_secondary_index(this->active_index_)
+              .entries.upper_bound(key),
+          this->table_, this->active_index_};
+}
+
+ToydbTable::IndexRange::Iterator ToydbTable::IndexRange::seek_equal(
+    const ToydbIndexKey &key) const {
+  // PK は完全一致検索
+  if (this->is_primary_) return this->find(key);
+
+  // Secondary は PK サフィックスを含むので lower_bound + プレフィクス判定
+  auto it = this->lower_bound(key);
+  if (it != this->end() && !key_prefix_matches(it.key(), key))
+    return this->end();
+  return it;
+}
+
+ToydbTable::IndexRange::Iterator ToydbTable::IndexRange::seek_after(
+    const ToydbIndexKey &key) const {
+  // PK は upper_bound で次のキーへ進む
+  if (this->is_primary_) return this->upper_bound(key);
+
+  // Secondary はプレフィクスマッチを全てスキップする
+  auto it = this->lower_bound(key);
+  while (it != this->end() && key_prefix_matches(it.key(), key)) ++it;
+  return it;
+}
+
+bool ToydbTable::IndexRange::empty() const {
+  if (this->is_primary_) return this->table_->row_count() == 0;
+  return this->table_->get_secondary_index(this->active_index_).entries.empty();
+}
+
+bool ToydbTable::IndexRange::is_primary() const { return this->is_primary_; }

@@ -3,7 +3,7 @@
 INSTALL PLUGIN toydb SONAME "ha_toydb.so";
 
 --disable_warnings
-DROP TABLE IF EXISTS t1, t2;
+DROP TABLE IF EXISTS t1, t2, t3;
 --enable_warnings
 
 # Table with PRIMARY KEY (Clustered Index)
@@ -86,6 +86,42 @@ SELECT * FROM t2;
 SELECT COUNT(*) FROM t2;
 
 DROP TABLE t2;
+
+# Composite PRIMARY KEY
+CREATE TABLE t3 (
+  a INT NOT NULL,
+  b INT NOT NULL,
+  val VARCHAR(20) NOT NULL,
+  PRIMARY KEY (a, b)
+) ENGINE=TOYDB;
+
+INSERT INTO t3 VALUES (1, 1, 'a1');
+INSERT INTO t3 VALUES (1, 2, 'a2');
+INSERT INTO t3 VALUES (2, 1, 'b1');
+INSERT INTO t3 VALUES (2, 2, 'b2');
+
+# Full ordering by composite PK
+SELECT * FROM t3 ORDER BY a, b;
+
+# Exact lookup with full composite key
+SELECT * FROM t3 WHERE a = 1 AND b = 2;
+
+# Prefix lookup on first key part
+SELECT * FROM t3 WHERE a = 2 ORDER BY b;
+
+# Duplicate composite key error
+--error 1022
+INSERT INTO t3 VALUES (1, 1, 'dup');
+
+# UPDATE changing non-PK column
+UPDATE t3 SET val = 'updated' WHERE a = 1 AND b = 2;
+SELECT * FROM t3 ORDER BY a, b;
+
+# DELETE via composite PK
+DELETE FROM t3 WHERE a = 2 AND b = 1;
+SELECT * FROM t3 ORDER BY a, b;
+
+DROP TABLE t3;
 
 # Cleanup: restore server state
 UNINSTALL PLUGIN toydb;

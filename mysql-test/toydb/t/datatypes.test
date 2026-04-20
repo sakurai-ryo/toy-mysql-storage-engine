@@ -3,7 +3,7 @@
 INSTALL PLUGIN toydb SONAME "ha_toydb.so";
 
 --disable_warnings
-DROP TABLE IF EXISTS t_int, t_str, t_mixed;
+DROP TABLE IF EXISTS t_int, t_str, t_mixed, t_unsigned;
 --enable_warnings
 
 # Integer types (all stored as int64 internally)
@@ -59,6 +59,23 @@ SELECT * FROM t_mixed WHERE age > 28 ORDER BY id;
 SELECT name, age FROM t_mixed ORDER BY id;
 
 DROP TABLE t_mixed;
+
+# UNSIGNED integer types (negative values are rejected by check_type_match)
+CREATE TABLE t_unsigned (
+  id INT NOT NULL,
+  a TINYINT UNSIGNED NOT NULL,
+  b INT UNSIGNED NOT NULL,
+  c BIGINT UNSIGNED NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=TOYDB;
+
+INSERT INTO t_unsigned VALUES (1, 0, 0, 0);
+INSERT INTO t_unsigned VALUES (2, 255, 4294967295, 9223372036854775807);
+INSERT INTO t_unsigned VALUES (3, 128, 100, 42);
+
+SELECT * FROM t_unsigned ORDER BY id;
+
+DROP TABLE t_unsigned;
 
 # Cleanup: restore server state
 UNINSTALL PLUGIN toydb;

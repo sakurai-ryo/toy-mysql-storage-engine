@@ -1,0 +1,52 @@
+# Index Condition Pushdown (ICP) tests for TOYDB storage engine
+#
+# TOYDB advertises HA_DO_INDEX_COND_PUSHDOWN and evaluates the pushed
+# condition inside try_icp_match().
+
+INSTALL PLUGIN toydb SONAME "ha_toydb.so";
+
+--disable_warnings
+DROP TABLE IF EXISTS t1;
+--enable_warnings
+
+CREATE TABLE t1 (
+  id INT NOT NULL,
+  category INT NOT NULL,
+  price INT NOT NULL,
+  name VARCHAR(50) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_category (category)
+) ENGINE=TOYDB;
+
+INSERT INTO t1 VALUES (1, 10, 100, 'Alice');
+INSERT INTO t1 VALUES (2, 10, 200, 'Bob');
+INSERT INTO t1 VALUES (3, 10, 300, 'Charlie');
+INSERT INTO t1 VALUES (4, 20, 100, 'Alice');
+INSERT INTO t1 VALUES (5, 20, 200, 'Eve');
+INSERT INTO t1 VALUES (6, 20, 300, 'Frank');
+INSERT INTO t1 VALUES (7, 30, 100, 'Grace');
+INSERT INTO t1 VALUES (8, 30, 200, 'Heidi');
+
+# Condition on indexed column only
+SELECT * FROM t1 WHERE category = 10 ORDER BY id;
+
+# ICP: indexed column + non-indexed column filter
+SELECT * FROM t1 WHERE category = 10 AND name = 'Alice';
+SELECT * FROM t1 WHERE category = 20 AND name = 'Alice';
+SELECT * FROM t1 WHERE category = 10 AND price > 150 ORDER BY id;
+
+# ICP on range scan
+SELECT * FROM t1 WHERE category >= 10 AND name = 'Alice' ORDER BY id;
+SELECT * FROM t1 WHERE category BETWEEN 10 AND 20 AND price = 200 ORDER BY id;
+
+# ICP that filters out every row
+SELECT * FROM t1 WHERE category = 10 AND name = 'missing';
+
+# ICP on primary key scan (clustered index)
+SELECT * FROM t1 WHERE id > 2 AND name = 'Alice' ORDER BY id;
+SELECT * FROM t1 WHERE id BETWEEN 3 AND 6 AND price >= 200 ORDER BY id;
+
+DROP TABLE t1;
+
+# Cleanup: restore server state
+UNINSTALL PLUGIN toydb;

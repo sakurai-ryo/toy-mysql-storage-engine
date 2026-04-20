@@ -1,0 +1,80 @@
+# AUTO_INCREMENT behavior tests for TOYDB storage engine
+
+INSTALL PLUGIN toydb SONAME "ha_toydb.so";
+
+--disable_warnings
+DROP TABLE IF EXISTS t1, t2;
+--enable_warnings
+
+# Basic AUTO_INCREMENT on INSERT without specifying the id
+CREATE TABLE t1 (
+  id INT NOT NULL AUTO_INCREMENT,
+  name VARCHAR(50) NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=TOYDB;
+
+INSERT INTO t1 (name) VALUES ('a'), ('b'), ('c');
+SELECT * FROM t1 ORDER BY id;
+
+# Explicit id larger than current counter advances AUTO_INCREMENT
+INSERT INTO t1 VALUES (100, 'hundred');
+INSERT INTO t1 (name) VALUES ('after_hundred');
+SELECT * FROM t1 ORDER BY id;
+
+# Explicit id smaller than current counter does not decrement
+INSERT INTO t1 VALUES (50, 'fifty');
+INSERT INTO t1 (name) VALUES ('after_fifty');
+SELECT * FROM t1 ORDER BY id;
+
+# SHOW CREATE TABLE reflects the current auto_increment value
+SHOW CREATE TABLE t1;
+
+DROP TABLE t1;
+
+# CREATE TABLE ... AUTO_INCREMENT=N sets the initial counter
+CREATE TABLE t1 (
+  id INT NOT NULL AUTO_INCREMENT,
+  name VARCHAR(50) NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=TOYDB AUTO_INCREMENT=1000;
+
+INSERT INTO t1 (name) VALUES ('first'), ('second');
+SELECT * FROM t1 ORDER BY id;
+
+DROP TABLE t1;
+
+# TRUNCATE resets the AUTO_INCREMENT counter (HTON_CAN_RECREATE path)
+CREATE TABLE t2 (
+  id INT NOT NULL AUTO_INCREMENT,
+  name VARCHAR(50) NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=TOYDB;
+
+INSERT INTO t2 (name) VALUES ('x'), ('y'), ('z');
+SELECT * FROM t2 ORDER BY id;
+
+TRUNCATE TABLE t2;
+INSERT INTO t2 (name) VALUES ('first_after_truncate');
+SELECT * FROM t2;
+
+# DELETE all rows does NOT reset AUTO_INCREMENT
+DELETE FROM t2;
+INSERT INTO t2 (name) VALUES ('after_delete');
+SELECT * FROM t2;
+
+DROP TABLE t2;
+
+# UNSIGNED AUTO_INCREMENT
+CREATE TABLE t1 (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(50) NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=TOYDB;
+
+INSERT INTO t1 (name) VALUES ('u1'), ('u2');
+SELECT * FROM t1 ORDER BY id;
+
+DROP TABLE t1;
+
+# Cleanup: restore server state
+UNINSTALL PLUGIN toydb;

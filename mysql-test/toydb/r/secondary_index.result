@@ -1,0 +1,133 @@
+INSTALL PLUGIN toydb SONAME "ha_toydb.so";
+DROP TABLE IF EXISTS t1, t2, t3;
+CREATE TABLE t1 (
+id INT NOT NULL,
+name VARCHAR(50) NOT NULL,
+category INT NOT NULL,
+PRIMARY KEY (id),
+KEY idx_category (category)
+) ENGINE=TOYDB;
+INSERT INTO t1 VALUES (1, 'Alice', 10);
+INSERT INTO t1 VALUES (2, 'Bob', 20);
+INSERT INTO t1 VALUES (3, 'Charlie', 10);
+INSERT INTO t1 VALUES (4, 'Dave', 30);
+INSERT INTO t1 VALUES (5, 'Eve', 20);
+SELECT * FROM t1 ORDER BY id;
+id	name	category
+1	Alice	10
+2	Bob	20
+3	Charlie	10
+4	Dave	30
+5	Eve	20
+SELECT * FROM t1 WHERE category = 10 ORDER BY id;
+id	name	category
+1	Alice	10
+3	Charlie	10
+SELECT * FROM t1 WHERE category = 20 ORDER BY id;
+id	name	category
+2	Bob	20
+5	Eve	20
+SELECT * FROM t1 WHERE category = 99;
+id	name	category
+SELECT * FROM t1 WHERE category >= 20 ORDER BY category, id;
+id	name	category
+2	Bob	20
+5	Eve	20
+4	Dave	30
+SELECT * FROM t1 WHERE category < 30 ORDER BY category, id;
+id	name	category
+1	Alice	10
+3	Charlie	10
+2	Bob	20
+5	Eve	20
+SELECT * FROM t1 WHERE category BETWEEN 10 AND 20 ORDER BY category, id;
+id	name	category
+1	Alice	10
+3	Charlie	10
+2	Bob	20
+5	Eve	20
+SELECT id, category FROM t1 ORDER BY category, id;
+id	category
+1	10
+3	10
+2	20
+5	20
+4	30
+SELECT id, category FROM t1 ORDER BY category DESC, id DESC;
+id	category
+4	30
+5	20
+2	20
+3	10
+1	10
+UPDATE t1 SET category = 40 WHERE id = 1;
+SELECT * FROM t1 WHERE category = 40;
+id	name	category
+1	Alice	40
+SELECT * FROM t1 WHERE category = 10 ORDER BY id;
+id	name	category
+3	Charlie	10
+UPDATE t1 SET name = 'Robert' WHERE id = 2;
+SELECT * FROM t1 WHERE category = 20 ORDER BY id;
+id	name	category
+2	Robert	20
+5	Eve	20
+DELETE FROM t1 WHERE id = 4;
+SELECT * FROM t1 WHERE category = 30;
+id	name	category
+SELECT * FROM t1 ORDER BY id;
+id	name	category
+1	Alice	40
+2	Robert	20
+3	Charlie	10
+5	Eve	20
+DROP TABLE t1;
+CREATE TABLE t2 (
+id INT NOT NULL,
+email VARCHAR(50) NOT NULL,
+PRIMARY KEY (id),
+UNIQUE KEY uk_email (email)
+) ENGINE=TOYDB;
+INSERT INTO t2 VALUES (1, 'a@example.com');
+INSERT INTO t2 VALUES (2, 'b@example.com');
+INSERT INTO t2 VALUES (3, 'c@example.com');
+INSERT INTO t2 VALUES (4, 'a@example.com');
+ERROR 23000: Can't write; duplicate key in table 't2'
+UPDATE t2 SET email = 'a@example.com' WHERE id = 2;
+ERROR 23000: Can't write; duplicate key in table 't2'
+UPDATE t2 SET email = 'new@example.com' WHERE id = 2;
+SELECT * FROM t2 ORDER BY id;
+id	email
+1	a@example.com
+2	new@example.com
+3	c@example.com
+SELECT * FROM t2 WHERE email = 'c@example.com';
+id	email
+3	c@example.com
+SELECT * FROM t2 WHERE email = 'missing@example.com';
+id	email
+DROP TABLE t2;
+CREATE TABLE t3 (
+id INT NOT NULL,
+a INT NOT NULL,
+b VARCHAR(20) NOT NULL,
+PRIMARY KEY (id),
+KEY idx_ab (a, b)
+) ENGINE=TOYDB;
+INSERT INTO t3 VALUES (1, 1, 'x');
+INSERT INTO t3 VALUES (2, 1, 'y');
+INSERT INTO t3 VALUES (3, 2, 'x');
+INSERT INTO t3 VALUES (4, 2, 'y');
+INSERT INTO t3 VALUES (5, 2, 'z');
+SELECT * FROM t3 WHERE a = 1 ORDER BY b, id;
+id	a	b
+SELECT * FROM t3 WHERE a = 2 ORDER BY b, id;
+id	a	b
+5	2	z
+SELECT * FROM t3 WHERE a = 2 AND b = 'y';
+id	a	b
+4	2	y
+SELECT * FROM t3 WHERE a = 2 AND b = 'missing';
+id	a	b
+DROP TABLE t3;
+UNINSTALL PLUGIN toydb;

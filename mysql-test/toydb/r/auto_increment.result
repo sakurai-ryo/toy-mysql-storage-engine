@@ -1,0 +1,86 @@
+INSTALL PLUGIN toydb SONAME "ha_toydb.so";
+DROP TABLE IF EXISTS t1, t2;
+CREATE TABLE t1 (
+id INT NOT NULL AUTO_INCREMENT,
+name VARCHAR(50) NOT NULL,
+PRIMARY KEY (id)
+) ENGINE=TOYDB;
+INSERT INTO t1 (name) VALUES ('a'), ('b'), ('c');
+SELECT * FROM t1 ORDER BY id;
+id	name
+1	a
+2	b
+3	c
+INSERT INTO t1 VALUES (100, 'hundred');
+INSERT INTO t1 (name) VALUES ('after_hundred');
+SELECT * FROM t1 ORDER BY id;
+id	name
+1	a
+2	b
+3	c
+100	hundred
+101	after_hundred
+INSERT INTO t1 VALUES (50, 'fifty');
+INSERT INTO t1 (name) VALUES ('after_fifty');
+SELECT * FROM t1 ORDER BY id;
+id	name
+1	a
+2	b
+3	c
+50	fifty
+100	hundred
+101	after_hundred
+102	after_fifty
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(50) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=TOYDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+DROP TABLE t1;
+CREATE TABLE t1 (
+id INT NOT NULL AUTO_INCREMENT,
+name VARCHAR(50) NOT NULL,
+PRIMARY KEY (id)
+) ENGINE=TOYDB AUTO_INCREMENT=1000;
+INSERT INTO t1 (name) VALUES ('first'), ('second');
+SELECT * FROM t1 ORDER BY id;
+id	name
+1000	first
+1001	second
+DROP TABLE t1;
+CREATE TABLE t2 (
+id INT NOT NULL AUTO_INCREMENT,
+name VARCHAR(50) NOT NULL,
+PRIMARY KEY (id)
+) ENGINE=TOYDB;
+INSERT INTO t2 (name) VALUES ('x'), ('y'), ('z');
+SELECT * FROM t2 ORDER BY id;
+id	name
+1	x
+2	y
+3	z
+TRUNCATE TABLE t2;
+INSERT INTO t2 (name) VALUES ('first_after_truncate');
+SELECT * FROM t2;
+id	name
+1	first_after_truncate
+DELETE FROM t2;
+INSERT INTO t2 (name) VALUES ('after_delete');
+SELECT * FROM t2;
+id	name
+2	after_delete
+DROP TABLE t2;
+CREATE TABLE t1 (
+id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+name VARCHAR(50) NOT NULL,
+PRIMARY KEY (id)
+) ENGINE=TOYDB;
+INSERT INTO t1 (name) VALUES ('u1'), ('u2');
+SELECT * FROM t1 ORDER BY id;
+id	name
+1	u1
+2	u2
+DROP TABLE t1;
+UNINSTALL PLUGIN toydb;

@@ -23,6 +23,7 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 #include "ha_toydb.h"
+#include "lock_manager.h"
 #include "toydb_table.h"
 
 #include <algorithm>
@@ -46,8 +47,10 @@
 
 #include "field_types.h"
 #include "my_base.h"
+#include "my_command.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
+#include "my_sqlcommand.h"
 #include "my_sys.h"
 #include "mysql/plugin.h"
 #include "mysql/service_thd_alloc.h"
@@ -76,7 +79,7 @@ static handler *toydb_create_handler(handlerton *hton, TABLE_SHARE *table, bool,
   return new (mem_root) ha_toydb(hton, table);
 }
 
-Toydb_share::Toydb_share() : data_mutex(std::make_unique<std::mutex>()) {
+Toydb_share::Toydb_share() {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
   thr_lock_init(&this->lock);
@@ -267,7 +270,18 @@ int ha_toydb::write_row(uchar *buf) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
+
+  // 全体にXロックをとる
+  if (int err = lm.xlock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
+  for (uint idx_no : table->list_secondary_index_numbers()) {
+    if (int err = lm.xlock(LockResourceId::secondary_index(table, idx_no), tx);
+        err != 0)
+      return err;
+  }
 
   // AUTO_INCREMENTカラムがある場合は値の採番を行う
   // table->record[0]: 書き込まれた新しい行
@@ -281,13 +295,13 @@ int ha_toydb::write_row(uchar *buf) {
   auto row_data = this->read_row_from_fields();
   if (!row_data) return row_data.error();
 
-  const int ret = this->share->toydb_table->insert_row(std::move(*row_data));
+  const int ret = table->insert_row(std::move(*row_data));
 
   // 挿入成功時にAUTO_INCREMENTカウンタを更新する
   if (ret == 0 && this->table->next_number_field != nullptr) {
     const ulonglong auto_inc_val =
         static_cast<ulonglong>(this->table->next_number_field->val_int());
-    this->share->toydb_table->update_auto_inc_value(auto_inc_val);
+    table->update_auto_inc_value(auto_inc_val);
   }
 
   return ret;
@@ -305,11 +319,21 @@ int ha_toydb::update_row(const uchar *, uchar *) {
   auto row_data = this->read_row_from_fields();
   if (!row_data) return row_data.error();
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
+
+  if (int err = lm.xlock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
+  for (uint idx_no : table->list_secondary_index_numbers()) {
+    if (int err = lm.xlock(LockResourceId::secondary_index(table, idx_no), tx);
+        err != 0)
+      return err;
+  }
+
   const auto pk_key = resolve_pk_key_from_cursor();
   if (!pk_key) return pk_key.error();
-  return this->share->toydb_table->update_row_by_key(*pk_key,
-                                                     std::move(*row_data));
+  return table->update_row_by_key(*pk_key, std::move(*row_data));
 }
 
 /**
@@ -319,11 +343,21 @@ int ha_toydb::delete_row(const uchar *) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
+
+  if (int err = lm.xlock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
+  for (uint idx_no : table->list_secondary_index_numbers()) {
+    if (int err = lm.xlock(LockResourceId::secondary_index(table, idx_no), tx);
+        err != 0)
+      return err;
+  }
 
   const auto pk_key = resolve_pk_key_from_cursor();
   if (!pk_key) return pk_key.error();
-  return this->share->toydb_table->delete_row_by_key(*pk_key);
+  return table->delete_row_by_key(*pk_key);
 }
 
 /**
@@ -523,9 +557,23 @@ int ha_toydb::index_read(uchar *buf, const uchar *key, uint key_len,
   if (!search_key_result) return search_key_result.error();
   auto search_key = std::move(*search_key_result);
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const ToydbTable::IndexRange range(this->share->toydb_table,
-                                     this->active_index,
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
+
+  // Clustered IndexとSecondary IndexのSロックを先にとる
+  if (int err = lm.slock(LockResourceId::clustered_index(table), tx);
+      err != 0) {
+    return err;
+  }
+  if (!is_primary_key_index(this->active_index)) {
+    if (int err = lm.slock(
+            LockResourceId::secondary_index(table, this->active_index), tx);
+        err != 0)
+      return err;
+  }
+
+  const ToydbTable::IndexRange range(table, this->active_index,
                                      this->table->s->primary_key);
 
   auto iter = range.end();
@@ -557,9 +605,22 @@ int ha_toydb::index_read(uchar *buf, const uchar *key, uint key_len,
       return HA_ERR_UNSUPPORTED;
   }
 
+  const bool for_update =
+      this->scan_context.read_type.has_value() &&
+      *this->scan_context.read_type == ROW_READ_TYPE::READ_FOR_UPDATE;
+
   // ICPマッチループ（PK/Secondary共通）
   for (; iter != range.end(); ++iter) {
     this->cursor.current_key = iter.key();
+    // SecondaryからPK抽出 → Row リソースを構築
+    const ToydbIndexKey pk_key = is_primary_key_index(this->active_index)
+                                     ? iter.key()
+                                     : table->extract_pk_key_from_secondary(
+                                           this->active_index, iter.key());
+    auto row_res = LockResourceId::row(table, pk_key);
+    const int err = for_update ? lm.xlock(row_res, tx) : lm.slock(row_res, tx);
+    if (err != 0) return err;
+
     const auto result = try_icp_match(*iter, buf);
     if (!result) return result.error();
     if (*result == ICP_MATCH_RESULT::MATCH) {
@@ -579,16 +640,39 @@ int ha_toydb::index_next(uchar *buf) {
 
   if (!this->cursor.current_key.has_value()) return HA_ERR_END_OF_FILE;
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const ToydbTable::IndexRange range(this->share->toydb_table,
-                                     this->active_index,
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
+
+  if (int err = lm.slock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
+  if (!is_primary_key_index(this->active_index)) {
+    if (int err = lm.slock(
+            LockResourceId::secondary_index(table, this->active_index), tx);
+        err != 0)
+      return err;
+  }
+
+  const ToydbTable::IndexRange range(table, this->active_index,
                                      this->table->s->primary_key);
 
   auto iter = range.find(*this->cursor.current_key);
   if (iter == range.end()) return HA_ERR_KEY_NOT_FOUND;
 
+  const bool for_update =
+      this->scan_context.read_type.has_value() &&
+      *this->scan_context.read_type == ROW_READ_TYPE::READ_FOR_UPDATE;
+
   for (++iter; iter != range.end(); ++iter) {
     this->cursor.current_key = iter.key();
+    const ToydbIndexKey pk_key = is_primary_key_index(this->active_index)
+                                     ? iter.key()
+                                     : table->extract_pk_key_from_secondary(
+                                           this->active_index, iter.key());
+    auto row_res = LockResourceId::row(table, pk_key);
+    const int err = for_update ? lm.xlock(row_res, tx) : lm.slock(row_res, tx);
+    if (err != 0) return err;
+
     const auto result = try_icp_match(*iter, buf);
     if (!result) return result.error();
     if (*result == ICP_MATCH_RESULT::MATCH) {
@@ -608,16 +692,40 @@ int ha_toydb::index_prev(uchar *buf) {
 
   if (!this->cursor.current_key.has_value()) return HA_ERR_END_OF_FILE;
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const ToydbTable::IndexRange range(this->share->toydb_table,
-                                     this->active_index,
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
+
+  if (int err = lm.slock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
+  if (!is_primary_key_index(this->active_index)) {
+    if (int err = lm.slock(
+            LockResourceId::secondary_index(table, this->active_index), tx);
+        err != 0)
+      return err;
+  }
+
+  const ToydbTable::IndexRange range(table, this->active_index,
                                      this->table->s->primary_key);
 
   auto iter = range.find(*this->cursor.current_key);
   if (iter == range.end() || iter == range.begin()) return HA_ERR_END_OF_FILE;
+
+  const bool for_update =
+      this->scan_context.read_type.has_value() &&
+      *this->scan_context.read_type == ROW_READ_TYPE::READ_FOR_UPDATE;
+
   while (iter != range.begin()) {
     --iter;
     this->cursor.current_key = iter.key();
+    const ToydbIndexKey pk_key = is_primary_key_index(this->active_index)
+                                     ? iter.key()
+                                     : table->extract_pk_key_from_secondary(
+                                           this->active_index, iter.key());
+    auto row_res = LockResourceId::row(table, pk_key);
+    const int err = for_update ? lm.xlock(row_res, tx) : lm.slock(row_res, tx);
+    if (err != 0) return err;
+
     const auto result = try_icp_match(*iter, buf);
     if (!result) return result.error();
     if (*result == ICP_MATCH_RESULT::MATCH) {
@@ -635,13 +743,36 @@ int ha_toydb::index_first(uchar *buf) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const ToydbTable::IndexRange range(this->share->toydb_table,
-                                     this->active_index,
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
+
+  if (int err = lm.slock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
+  if (!is_primary_key_index(this->active_index)) {
+    if (int err = lm.slock(
+            LockResourceId::secondary_index(table, this->active_index), tx);
+        err != 0)
+      return err;
+  }
+
+  const ToydbTable::IndexRange range(table, this->active_index,
                                      this->table->s->primary_key);
+
+  const bool for_update =
+      this->scan_context.read_type.has_value() &&
+      *this->scan_context.read_type == ROW_READ_TYPE::READ_FOR_UPDATE;
 
   for (auto iter = range.begin(); iter != range.end(); ++iter) {
     this->cursor.current_key = iter.key();
+    const ToydbIndexKey pk_key = is_primary_key_index(this->active_index)
+                                     ? iter.key()
+                                     : table->extract_pk_key_from_secondary(
+                                           this->active_index, iter.key());
+    auto row_res = LockResourceId::row(table, pk_key);
+    const int err = for_update ? lm.xlock(row_res, tx) : lm.slock(row_res, tx);
+    if (err != 0) return err;
+
     const auto result = try_icp_match(*iter, buf);
     if (!result) return result.error();
     if (*result == ICP_MATCH_RESULT::MATCH) {
@@ -659,20 +790,47 @@ int ha_toydb::index_last(uchar *buf) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-  const ToydbTable::IndexRange range(this->share->toydb_table,
-                                     this->active_index,
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
+
+  if (int err = lm.slock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
+  if (!is_primary_key_index(this->active_index)) {
+    if (int err = lm.slock(
+            LockResourceId::secondary_index(table, this->active_index), tx);
+        err != 0)
+      return err;
+  }
+
+  const ToydbTable::IndexRange range(table, this->active_index,
                                      this->table->s->primary_key);
 
   if (range.empty()) return HA_ERR_END_OF_FILE;
+
+  const bool for_update =
+      this->scan_context.read_type.has_value() &&
+      *this->scan_context.read_type == ROW_READ_TYPE::READ_FOR_UPDATE;
+
   auto iter = range.last();
   while (true) {
     this->cursor.current_key = iter.key();
-    const auto result = try_icp_match(*iter, buf);
-    if (!result) return result.error();
-    if (*result == ICP_MATCH_RESULT::MATCH) {
-      ha_statistic_increment(&System_status_var::ha_read_last_count);
-      return 0;
+    {
+      const ToydbIndexKey pk_key = is_primary_key_index(this->active_index)
+                                       ? iter.key()
+                                       : table->extract_pk_key_from_secondary(
+                                             this->active_index, iter.key());
+      auto row_res = LockResourceId::row(table, pk_key);
+      const int err =
+          for_update ? lm.xlock(row_res, tx) : lm.slock(row_res, tx);
+      if (err != 0) return err;
+
+      const auto result = try_icp_match(*iter, buf);
+      if (!result) return result.error();
+      if (*result == ICP_MATCH_RESULT::MATCH) {
+        ha_statistic_increment(&System_status_var::ha_read_last_count);
+        return 0;
+      }
     }
 
     if (iter == range.begin()) break;
@@ -704,24 +862,34 @@ int ha_toydb::rnd_next(uchar *buf) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
 
-  const auto *toydb_table = this->share->toydb_table;
+  if (int err = lm.slock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
 
   // Clustered Indexを順スキャンする
   // カーソルが未設定なら先頭から、設定済みならupper_boundで次の行へ
   ToydbTable::RowIterator iter;
   if (!this->cursor.current_key.has_value()) {
-    iter = toydb_table->rows_begin();
+    iter = table->rows_begin();
   } else {
-    iter = toydb_table->upper_bound_row(*this->cursor.current_key);
+    iter = table->upper_bound_row(*this->cursor.current_key);
   }
 
-  if (iter == toydb_table->rows_end()) return HA_ERR_END_OF_FILE;
+  if (iter == table->rows_end()) return HA_ERR_END_OF_FILE;
 
   ha_statistic_increment(&System_status_var::ha_read_rnd_next_count);
 
   this->cursor.current_key = iter->first;
+
+  const bool for_update =
+      this->scan_context.read_type.has_value() &&
+      *this->scan_context.read_type == ROW_READ_TYPE::READ_FOR_UPDATE;
+  auto row_res = LockResourceId::row(table, iter->first);
+  const int err = for_update ? lm.xlock(row_res, tx) : lm.slock(row_res, tx);
+  if (err != 0) return err;
 
   return store_row_to_buf(this->table, buf, iter->second.values);
 }
@@ -751,14 +919,25 @@ int ha_toydb::rnd_pos(uchar *buf, uchar *pos) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s idx=%u", __func__, this->active_index));
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
+
+  if (int err = lm.slock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
 
   // refからPKキーをデシリアライズしてClustered Indexをルックアップ
   auto pk_result = deserialize_pk_from_ref(pos);
   if (!pk_result) return pk_result.error();
-  const auto *toydb_table = this->share->toydb_table;
-  const auto it = toydb_table->find_row(*pk_result);
-  if (it == toydb_table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
+  const auto it = table->find_row(*pk_result);
+  if (it == table->rows_end()) return HA_ERR_KEY_NOT_FOUND;
+
+  const bool for_update =
+      this->scan_context.read_type.has_value() &&
+      *this->scan_context.read_type == ROW_READ_TYPE::READ_FOR_UPDATE;
+  auto row_res = LockResourceId::row(table, it->first);
+  const int err = for_update ? lm.xlock(row_res, tx) : lm.slock(row_res, tx);
+  if (err != 0) return err;
 
   return store_row_to_buf(this->table, buf, it->second.values);
 }
@@ -770,16 +949,20 @@ int ha_toydb::info(uint flag) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
 
-  this->stats.records = this->share->toydb_table->row_count();
+  if (int err = lm.slock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
+
+  this->stats.records = table->row_count();
 
   // InnoDBがhandler::info内でauto_increment_valueを更新しているのをパクってる
   if ((flag & HA_STATUS_AUTO) != 0) {
     DBUG_PRINT("toydb", ("Updating auto_increment_value in stats: %llu",
-                         this->share->toydb_table->get_next_auto_inc_value()));
-    this->stats.auto_increment_value =
-        this->share->toydb_table->get_next_auto_inc_value();
+                         table->get_next_auto_inc_value()));
+    this->stats.auto_increment_value = table->get_next_auto_inc_value();
   }
   return 0;
 }
@@ -876,37 +1059,71 @@ int ha_toydb::delete_all_rows() {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
+  auto *table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
 
-  this->share->toydb_table->clear_rows();
-  return 0;
-}
+  if (int err = lm.xlock(LockResourceId::clustered_index(table), tx); err != 0)
+    return err;
+  for (uint idx_no : table->list_secondary_index_numbers()) {
+    if (int err = lm.xlock(LockResourceId::secondary_index(table, idx_no), tx);
+        err != 0)
+      return err;
+  }
 
-/**
- * @brief
- * SQLステートメント開始時と終了時に行うべきSE内部リソースのロックとアンロックを行う
- *
- * 今回はデータは全てインメモリなので特になし
- */
-int ha_toydb::external_lock(THD *, int) {
-  // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  table->clear_rows();
   return 0;
 }
 
 /**
  * @brief SQLステートメント開始前に必要なロック情報をMySQLに提供する
+ *
+ * store_lock => external_lockの順番で呼び出し
  */
 THR_LOCK_DATA **ha_toydb::store_lock(THD *, THR_LOCK_DATA **to,
                                      enum thr_lock_type lock_type) {
   // DBUG_TRACE;
-  DBUG_PRINT("toydb", ("%s", __func__));
+  DBUG_PRINT("toydb", ("%s lock_type=%d", __func__, lock_type));
 
   // 今回は特にロックは実装しないが、ロックの種類が指定された場合はlock構造体のtypeにセットしてMySQLに返す
   if (lock_type != TL_IGNORE && this->lock.type == TL_UNLOCK)
     this->lock.type = lock_type;
   *to++ = &this->lock;
   return to;
+}
+
+/**
+ * @brief
+ * SQLステートメント開始時と終了時に行うべきSE内部リソースのロックとアンロックを行う
+ *
+ * 各ステートメント開始時に必要なロックの種類を判断して、後続の読み取りで取得するロックを判断する
+ */
+int ha_toydb::external_lock(THD *thd, int lock_type) {
+  this->sql_command = static_cast<enum_sql_command>(thd_sql_command(thd));
+
+  // DBUG_TRACE;
+  DBUG_PRINT("toydb", ("%s sql_command=%d lock_type=%d", __func__,
+                       static_cast<int>(this->sql_command), lock_type));
+
+  switch (lock_type) {
+    case F_RDLCK:
+      this->scan_context.read_type = ROW_READ_TYPE::READ_FOR_SHARE;
+      break;
+    case F_WRLCK:
+      this->scan_context.read_type = ROW_READ_TYPE::READ_FOR_UPDATE;
+      break;
+    case F_UNLCK:
+      // ステートメント終了時にロックを解除する
+      // LockManagerで保持している本THDのロックもここで全解放する
+      this->scan_context.read_type = std::nullopt;
+      toydb_tables->lock_manager->unlock_all(thd);
+      break;
+    default:
+      this->scan_context.read_type = ROW_READ_TYPE::READ;
+      break;
+  }
+
+  return 0;
 }
 
 /**
@@ -951,11 +1168,23 @@ ha_rows ha_toydb::records_in_range(uint index_num, key_range *min_key,
                                    key_range *max_key) {
   DBUG_PRINT("toydb", ("%s", __func__));
 
-  std::lock_guard<std::mutex> data_lock(*this->share->data_mutex);
-
   active_index = index_num;
 
-  const ToydbTable *toydb_table = this->share->toydb_table;
+  auto *toydb_table = this->share->toydb_table;
+  auto &lm = *toydb_tables->lock_manager;
+  auto *const tx = this->ha_thd();
+
+  // deref しないのでPKか対応secondaryのどちらか片方だけSH取得すればよい
+  if (is_primary_key_index(index_num)) {
+    if (int err = lm.slock(LockResourceId::clustered_index(toydb_table), tx);
+        err != 0)
+      return HA_POS_ERROR;
+  } else {
+    if (int err = lm.slock(
+            LockResourceId::secondary_index(toydb_table, index_num), tx);
+        err != 0)
+      return HA_POS_ERROR;
+  }
 
   // min_key/max_keyはNULLの場合がある（片側のみの範囲条件時）
   std::optional<ToydbIndexKey> min_index_key;
@@ -1067,7 +1296,6 @@ void ha_toydb::get_auto_increment(ulonglong offset, ulonglong increment,
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
 
-  // 呼び出し元のwrite_row()で既にdata_mutexを取得済みなのでここではロックしない
   *first_value = this->share->toydb_table->get_next_auto_inc_value();
   *nb_reserved_values = ULLONG_MAX;
 }

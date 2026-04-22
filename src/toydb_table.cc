@@ -28,6 +28,7 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -36,6 +37,7 @@
 #include <vector>
 
 #include "field_types.h"
+#include "lock_manager.h"
 #include "my_base.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
@@ -102,18 +104,21 @@ void ToydbTable::set_primary_key(std::vector<uint> indices) {
 ulonglong ToydbTable::get_next_auto_inc_value() const {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
+  std::lock_guard<std::mutex> lock(*this->auto_inc_mutex_);
   return this->next_auto_inc_value;
 }
 
 void ToydbTable::set_auto_inc_value(ulonglong value) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
+  std::lock_guard<std::mutex> lock(*this->auto_inc_mutex_);
   this->next_auto_inc_value = value;
 }
 
 void ToydbTable::update_auto_inc_value(ulonglong value) {
   // DBUG_TRACE;
   DBUG_PRINT("toydb", ("%s", __func__));
+  std::lock_guard<std::mutex> lock(*this->auto_inc_mutex_);
   if (value >= this->next_auto_inc_value) {
     this->next_auto_inc_value = value + 1;
   }
@@ -433,6 +438,15 @@ const ToydbSecondaryIndex &ToydbTable::get_secondary_index(
   return this->secondary_indexes.at(mysql_index_no);
 }
 
+std::vector<uint> ToydbTable::list_secondary_index_numbers() const {
+  std::vector<uint> result;
+  result.reserve(this->secondary_indexes.size());
+  for (const auto &[idx_no, _] : this->secondary_indexes) {
+    result.push_back(idx_no);
+  }
+  return result;
+}
+
 ToydbTable::IndexRange::Iterator::reference
 ToydbTable::IndexRange::Iterator::operator*() const {
   return std::visit(
@@ -590,3 +604,8 @@ bool ToydbTable::IndexRange::empty() const {
 }
 
 bool ToydbTable::IndexRange::is_primary() const { return this->is_primary_; }
+
+// ToydbTables のctor/dtorは、ヘッダでLockManagerをforward declしているため
+// 定義はここ（完全型が見える場所）に置く必要がある
+ToydbTables::ToydbTables() : lock_manager(std::make_unique<LockManager>()) {}
+ToydbTables::~ToydbTables() = default;

@@ -26,13 +26,13 @@ DISABLE_MISSING_PROFILE_WARNING()
 ADD_DEFINITIONS(-DMYSQL_SERVER)
 
 IF(WITH_TOYDB_STORAGE_ENGINE AND NOT WITHOUT_TOYDB_STORAGE_ENGINE)
-  MYSQL_ADD_PLUGIN(toydb ha_toydb.cc toydb_table.cc
+  MYSQL_ADD_PLUGIN(toydb ha_toydb.cc toydb_table.cc lock_manager.cc
     STORAGE_ENGINE
     DEFAULT
     LINK_LIBRARIES ext::zlib extra::rapidjson absl::btree
     )
 ELSEIF(NOT WITHOUT_TOYDB_STORAGE_ENGINE)
-  MYSQL_ADD_PLUGIN(toydb ha_toydb.cc toydb_table.cc
+  MYSQL_ADD_PLUGIN(toydb ha_toydb.cc toydb_table.cc lock_manager.cc
     STORAGE_ENGINE
     MODULE_ONLY
     LINK_LIBRARIES ext::zlib extra::rapidjson absl::btree

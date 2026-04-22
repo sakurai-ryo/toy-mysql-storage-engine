@@ -31,6 +31,8 @@
 #include <functional>
 #include <iterator>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <variant>
@@ -129,6 +131,9 @@ struct ToydbSecondaryIndex {
   // セカンダリインデックスの実データ
   // sec_key + PK suffix
   absl::btree_set<ToydbIndexKey> entries;
+
+  // ロックはLockManagerで {table, mysql_index_no}
+  // のリソース識別子で管理されるため、 ここには持たない。
 };
 
 /**
@@ -151,6 +156,9 @@ class ToydbTable final {
 
   // MySQLインデックス番号とセカンダリインデックス定義の紐付け
   std::map<uint, ToydbSecondaryIndex> secondary_indexes;
+
+  // AUTO-INC は InnoDB の AUTO-INC ロック相当として LockManager とは独立に持つ
+  std::unique_ptr<std::mutex> auto_inc_mutex_{std::make_unique<std::mutex>()};
 
  public:
   using RowIterator = absl::btree_map<ToydbIndexKey, ToydbRow>::const_iterator;
@@ -196,6 +204,8 @@ class ToydbTable final {
   bool has_secondary_index(uint mysql_index_no) const;
   const ToydbSecondaryIndex &get_secondary_index(uint mysql_index_no) const;
 
+  std::vector<uint> list_secondary_index_numbers() const;
+
   /**
    * @brief Clustered Index / Secondary Index を統一的に走査する
    */
@@ -220,6 +230,9 @@ class ToydbTable final {
           : iter(it), table(t), active_index(idx) {}
 
       // 行データを返す（Secondary の場合は PK ルックアップ）
+      // ロックは取得しないので、呼び出し元がLockManagerで
+      // ClusteredIndexTreeのSH（必要ならSecondaryIndexTreeのSHも）と
+      // 対象RowのSH/EXを取得済みであること
       reference operator*() const;
       pointer operator->() const;
 
@@ -280,11 +293,18 @@ static_assert(std::bidirectional_iterator<ToydbTable::IndexRange::Iterator>);
 bool key_prefix_matches(const ToydbIndexKey &full_key,
                         const ToydbIndexKey &prefix);
 
+class LockManager;  // lock_manager.h で定義
+
 /**
- * @brief 全テーブルの定義と実データを管理する
+ * @brief 全テーブルの定義と実データ + ロックマネージャを管理する
  */
 struct ToydbTables {
   std::map<std::string, ToydbTable> tables;
+  // テーブル横断でロックを管理するLockManagerの単一インスタンス
+  std::unique_ptr<LockManager> lock_manager;
+
+  ToydbTables();
+  ~ToydbTables();
 };
 
 #endif  // TOYDB_TABLE_H

@@ -25,11 +25,11 @@
 #include <expected>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <vector>
 
 #include "my_base.h"
+#include "my_sqlcommand.h"
 #include "sql/handler.h"
 #include "thr_lock.h"
 
@@ -40,16 +40,18 @@ enum class ICP_MATCH_RESULT {
   NOT_MATCH,
 };
 
+enum class ROW_READ_TYPE {
+  READ,
+  READ_FOR_UPDATE,
+  READ_FOR_SHARE,
+};
+
 /**
  * @brief 同じテーブルの全てのhandlerインスタンスで共有するデータ
  */
 class Toydb_share final : public Handler_share {
  public:
   THR_LOCK lock;
-
-  // TODO:
-  // 現状だと、write_rowなどの際にまるっとロックを取ってるので細かい粒度のロックに書き換えたい
-  std::unique_ptr<std::mutex> data_mutex;
 
   // open()時に検索したToydbTableへのポインタをキャッシュする
   // ToydbTableはToydb_shareより長い寿命なので一旦生ポインタで管理する
@@ -67,6 +69,18 @@ class Toydb_share final : public Handler_share {
  */
 struct ToydbCursor {
   std::optional<ToydbIndexKey> current_key;
+};
+
+/**
+ * @brief 現在の読み取りに関するコンテキスト
+ *
+ * handler::external_lockで必要なロックを判断して、このコンテキストに保存する
+ *
+ * 後続の読み取り操作はこのコンテキストを参照して必要なロックを取得する。
+ */
+struct ToydbScanContext {
+  // 現在のスキャンの種類
+  std::optional<ROW_READ_TYPE> read_type;
 };
 
 /** @brief
@@ -150,7 +164,6 @@ class ha_toydb : public handler {
   ha_rows records_in_range(uint index_num, key_range *min_key,
                            key_range *max_key) override;
 
-  // 呼び出し元のwrite_row()で既にdata_mutexを取得済みの前提
   void get_auto_increment(ulonglong offset, ulonglong increment,
                           ulonglong nb_desired_values, ulonglong *first_value,
                           ulonglong *nb_reserved_values) override;
@@ -214,6 +227,13 @@ class ha_toydb : public handler {
   // 行をレコードバッファに格納してICP条件を評価する
   std::expected<ICP_MATCH_RESULT, int> try_icp_match(
       const std::vector<SupportedDBValue> &values, uchar *buf);
+
+  ToydbScanContext scan_context;
+
+  /**
+   * @brief 現在のSQLコマンド
+   */
+  enum_sql_command sql_command;
 
   // Handler_shareのロックをRAIIで管理する
   // 内部ではmysql_mutex_lock,mysql_mutex_unlockを利用していてstd::lock_guardを使えないのでラッパーを作った
